@@ -1,0 +1,18 @@
+{
+  "name": "milart",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A free, self-hostable Milanote-style visual board.",
+  "scripts": {
+    "install:all": "npm install && npm --prefix client install && npm --prefix server install",
+    "dev": "concurrently -n client,server -c cyan,magenta \"npm --prefix client run dev\" \"npm --prefix server run dev\"",
+    "build": "npm --prefix client install && npm --prefix client run build && npm --prefix server install",
+    "start": "npm --prefix server start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
