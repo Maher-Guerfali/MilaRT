@@ -22,6 +22,15 @@ export default function BoardPage() {
   const [mode, setMode] = useState<Mode>('drag');
   const [drawColor, setDrawColor] = useState('#1b1b1b');
   const [drawWidth, setDrawWidth] = useState(2);
+  // Persist pen-only across sessions on the same device — most users will
+  // either always be on iPad with a pencil or never.
+  const [penOnly, setPenOnly] = useState<boolean>(() => {
+    try { return localStorage.getItem('milart.penOnly') === '1'; } catch { return false; }
+  });
+  function togglePenOnly(v: boolean) {
+    setPenOnly(v);
+    try { localStorage.setItem('milart.penOnly', v ? '1' : '0'); } catch { /* ignore */ }
+  }
 
   const load = useCallback(async () => {
     if (!code) return;
@@ -124,9 +133,11 @@ export default function BoardPage() {
           mode={mode}
           color={drawColor}
           width={drawWidth}
+          penOnly={penOnly}
           onMode={setMode}
           onColor={setDrawColor}
           onWidth={setDrawWidth}
+          onPenOnly={togglePenOnly}
           onClear={() => setStrokes([])}
         />
         <Canvas
@@ -135,6 +146,7 @@ export default function BoardPage() {
           mode={mode}
           drawColor={drawColor}
           drawWidth={drawWidth}
+          penOnly={penOnly}
           onUpdate={updateItem}
           onDelete={deleteItem}
           onAdd={addItem}

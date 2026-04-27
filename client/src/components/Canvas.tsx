@@ -12,6 +12,7 @@ interface Props {
   mode: Mode;
   drawColor: string;
   drawWidth: number;
+  penOnly: boolean;
   onUpdate: (id: string, patch: Partial<BaseItem>) => void;
   onDelete: (id: string) => void;
   onAdd: (item: BaseItem) => void;
@@ -24,7 +25,7 @@ interface Props {
 const SCALE = 1;
 
 export default function Canvas({
-  items, strokes, mode, drawColor, drawWidth,
+  items, strokes, mode, drawColor, drawWidth, penOnly,
   onUpdate, onDelete, onAdd, onSetStrokes, onEnterBoard,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -208,6 +209,7 @@ export default function Canvas({
         color={drawColor}
         width={drawWidth}
         eraser={eraser}
+        penOnly={penOnly}
         onChange={onSetStrokes}
         toWorld={toWorld}
       />

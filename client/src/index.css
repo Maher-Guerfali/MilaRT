@@ -12,6 +12,27 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   touch-action: none;
+  /* Kill iOS long-press selection/callout/tap-highlight everywhere by
+     default. Inputs opt back in below. This is what was making the
+     toolbar buttons "select" (and interrupt drawing) when the user
+     pressed and held with a finger or pen. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Re-enable text selection only where the user is actually editing. */
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+button {
+  touch-action: manipulation;
 }
 
 .board-bg {

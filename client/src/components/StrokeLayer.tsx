@@ -8,12 +8,13 @@ interface Props {
   color: string;
   width: number;
   eraser: boolean;
+  penOnly: boolean;
   onChange: (next: Stroke[]) => void;
   toWorld: (clientX: number, clientY: number) => { x: number; y: number };
 }
 
 export default function StrokeLayer({
-  view, strokes, drawMode, color, width, eraser, onChange, toWorld,
+  view, strokes, drawMode, color, width, eraser, penOnly, onChange, toWorld,
 }: Props) {
   const [active, setActive] = useState<Stroke | null>(null);
 
@@ -45,6 +46,9 @@ export default function StrokeLayer({
 
   function onDown(e: React.PointerEvent) {
     if (!drawMode) return;
+    // In Pencil-only mode: ignore finger/mouse so palm rests can't draw.
+    // The user can switch to Drag mode for finger panning.
+    if (penOnly && e.pointerType !== 'pen') return;
     e.stopPropagation();
     drawingRef.current = true;
     const { x, y } = toWorld(e.clientX, e.clientY);

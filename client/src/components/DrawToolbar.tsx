@@ -1,4 +1,4 @@
-import { PenIcon, HandIcon, EraserIcon } from './icons';
+import { PenIcon, HandIcon, EraserIcon, StylusIcon } from './icons';
 
 export type Mode = 'drag' | 'pen' | 'erase';
 
@@ -8,42 +8,65 @@ interface Props {
   mode: Mode;
   color: string;
   width: number;
+  penOnly: boolean;
   onMode: (m: Mode) => void;
   onColor: (c: string) => void;
   onWidth: (w: number) => void;
+  onPenOnly: (v: boolean) => void;
   onClear: () => void;
 }
 
 export default function DrawToolbar({
-  mode, color, width, onMode, onColor, onWidth, onClear,
+  mode, color, width, penOnly, onMode, onColor, onWidth, onPenOnly, onClear,
 }: Props) {
+  const palette = mode === 'pen' || mode === 'erase';
+
   return (
     <div className="absolute top-3 right-3 z-20 flex items-start gap-2">
-      {mode === 'pen' && (
+      {palette && (
         <div className="bg-white/95 backdrop-blur rounded-lg shadow border border-black/10 px-2 py-2 flex items-center gap-2">
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              onClick={() => onColor(c)}
-              className="w-6 h-6 rounded-full border border-black/15"
-              style={{
-                background: c,
-                boxShadow: color === c ? '0 0 0 2px rgba(0,0,0,0.6)' : 'none',
-              }}
-              aria-label={`Ink ${c}`}
-            />
-          ))}
-          <input
-            type="range" min={1} max={10} value={width}
-            onChange={(e) => onWidth(Number(e.target.value))}
-            className="w-20"
-            title="Stroke width"
-          />
+          {mode === 'pen' && (
+            <>
+              {COLORS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => onColor(c)}
+                  className="w-6 h-6 rounded-full border border-black/15"
+                  style={{
+                    background: c,
+                    boxShadow: color === c ? '0 0 0 2px rgba(0,0,0,0.6)' : 'none',
+                  }}
+                  aria-label={`Ink ${c}`}
+                />
+              ))}
+              <input
+                type="range" min={1} max={10} value={width}
+                onChange={(e) => onWidth(Number(e.target.value))}
+                className="w-20"
+                title="Stroke width"
+              />
+              <span className="w-px h-6 bg-black/10 mx-1" />
+            </>
+          )}
+
           <button
-            onClick={onClear}
-            className="text-xs px-2 py-1 rounded-md border border-ink/20 hover:bg-ink/5"
-            title="Clear all strokes on this board"
-          >Clear</button>
+            onClick={() => onPenOnly(!penOnly)}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${
+              penOnly ? 'bg-ink text-paper border-ink' : 'border-ink/20 hover:bg-ink/5'
+            }`}
+            title="When on, only Apple Pencil/stylus draws. Finger touches are ignored so your palm won't make marks."
+          >
+            <StylusIcon size={14} />
+            <span>Pencil only</span>
+          </button>
+
+          {mode === 'pen' && (
+            <button
+              onClick={onClear}
+              className="text-xs px-2 py-1 rounded-md border border-ink/20 hover:bg-ink/5"
+              title="Clear all strokes on this board"
+            >Clear</button>
+          )}
         </div>
       )}
 

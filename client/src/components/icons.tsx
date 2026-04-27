@@ -88,3 +88,12 @@ export const EraserIcon = wrap(
     <path d="M14 6 20 12" />
   </>
 );
+
+export const StylusIcon = wrap(
+  <>
+    <path d="M16 3 21 8 9 20H4v-5z" />
+    <path d="m13 6 5 5" />
+    <path d="M5 22h14" />
+  </>
+);
+
