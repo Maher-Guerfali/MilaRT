@@ -4,14 +4,14 @@ import type { BaseItem, Stroke } from '../types';
 import { api } from '../api';
 import ItemView from './ItemView';
 import StrokeLayer from './StrokeLayer';
+import type { Mode } from './DrawToolbar';
 
 interface Props {
   items: BaseItem[];
   strokes: Stroke[];
-  drawMode: boolean;
+  mode: Mode;
   drawColor: string;
   drawWidth: number;
-  eraser: boolean;
   onUpdate: (id: string, patch: Partial<BaseItem>) => void;
   onDelete: (id: string) => void;
   onAdd: (item: BaseItem) => void;
@@ -19,45 +19,48 @@ interface Props {
   onEnterBoard: (itemId: string) => void;
 }
 
+// Zoom is intentionally locked at 1 for now — the variable scale path was
+// causing confusion and an unrelated zoom bug. Pan still works.
+const SCALE = 1;
+
 export default function Canvas({
-  items, strokes, drawMode, drawColor, drawWidth, eraser,
+  items, strokes, mode, drawColor, drawWidth,
   onUpdate, onDelete, onAdd, onSetStrokes, onEnterBoard,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selected, setSelected] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
 
+  const drawMode = mode !== 'drag';
+  const eraser = mode === 'erase';
+  const interactive = mode === 'drag';
+
   function toWorld(clientX: number, clientY: number) {
     const rect = wrapRef.current!.getBoundingClientRect();
-    return {
-      x: (clientX - rect.left - view.x) / view.scale,
-      y: (clientY - rect.top - view.y) / view.scale,
-    };
+    return { x: clientX - rect.left - pan.x, y: clientY - rect.top - pan.y };
   }
   function centerOfView() {
     const rect = wrapRef.current!.getBoundingClientRect();
     return toWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
-  // Pan when the user drags on empty background (and not in draw mode).
   function onBgPointerDown(e: React.PointerEvent) {
     if (drawMode) return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
     setSelected(null);
     setPanning(true);
-    panStart.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y };
+    panStart.current = { px: e.clientX, py: e.clientY, vx: pan.x, vy: pan.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function onBgPointerMove(e: React.PointerEvent) {
-    // Capture the snapshot synchronously so the queued setState can't see a null.
     const ps = panStart.current;
     if (!panning || !ps) return;
     const dx = e.clientX - ps.px;
     const dy = e.clientY - ps.py;
-    setView((v) => ({ ...v, x: ps.vx + dx, y: ps.vy + dy }));
+    setPan({ x: ps.vx + dx, y: ps.vy + dy });
   }
   function onBgPointerUp(e: React.PointerEvent) {
     setPanning(false);
@@ -67,58 +70,45 @@ export default function Canvas({
     }
   }
 
+  // Wheel pans the board. Zoom (Ctrl+wheel) intentionally disabled for now.
   function onWheel(e: React.WheelEvent) {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = -e.deltaY * 0.0015;
-      const next = Math.min(2.5, Math.max(0.25, view.scale * (1 + delta)));
-      const rect = wrapRef.current!.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const worldX = (cx - view.x) / view.scale;
-      const worldY = (cy - view.y) / view.scale;
-      setView({ scale: next, x: cx - worldX * next, y: cy - worldY * next });
-    } else {
-      setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
-    }
+    setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
   }
 
-  // Drop a file from desktop -> upload -> create image item at the cursor.
-  async function onDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setDragOver(false);
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
-    const pos = toWorld(e.clientX, e.clientY);
-    for (const file of files) {
-      try {
-        const { url } = await api.uploadImage(file);
-        await placeImage(url, pos.x, pos.y);
-        pos.x += 30; pos.y += 30; // stagger if multiple
-      } catch (err) {
-        console.error('upload failed', err);
-      }
-    }
-  }
-
-  async function placeImage(url: string, cx: number, cy: number) {
-    const img = new Image();
-    await new Promise<void>((resolve) => { img.onload = () => resolve(); img.src = url; });
-    const maxW = 360;
-    const scale = Math.min(1, maxW / img.width);
+  // Add an image item with a sane default size and let the browser load it
+  // in place. Avoids "nothing happens" when the URL 404s — at least a card
+  // appears so the user can see the broken state and delete it.
+  function placeImageNow(url: string, cx: number, cy: number, defaultW = 280, defaultH = 200) {
     onAdd({
       id: nanoid(10),
       type: 'image',
-      x: cx - (img.width * scale) / 2,
-      y: cy - (img.height * scale) / 2,
-      w: img.width * scale,
-      h: img.height * scale,
+      x: cx - defaultW / 2,
+      y: cy - defaultH / 2,
+      w: defaultW,
+      h: defaultH,
       z: 0,
       data: { url },
     });
   }
 
-  // Paste images from the clipboard or text into a sticky/link.
+  async function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;
+    const start = toWorld(e.clientX, e.clientY);
+    let off = 0;
+    for (const file of files) {
+      try {
+        const { url } = await api.uploadImage(file);
+        placeImageNow(url, start.x + off, start.y + off);
+        off += 30;
+      } catch (err) {
+        alert('Image upload failed: ' + (err as Error).message);
+      }
+    }
+  }
+
   useEffect(() => {
     async function onPaste(e: ClipboardEvent) {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -130,9 +120,13 @@ export default function Canvas({
         e.preventDefault();
         const file = imgItem.getAsFile();
         if (!file) return;
-        const { url } = await api.uploadImage(file);
-        const pos = centerOfView();
-        await placeImage(url, pos.x, pos.y);
+        try {
+          const { url } = await api.uploadImage(file);
+          const pos = centerOfView();
+          placeImageNow(url, pos.x, pos.y);
+        } catch (err) {
+          alert('Image upload failed: ' + (err as Error).message);
+        }
         return;
       }
       const text = cd.getData('text/plain');
@@ -169,11 +163,16 @@ export default function Canvas({
     return () => window.removeEventListener('keydown', onKey);
   }, [selected, onDelete]);
 
+  const cursor =
+    mode === 'pen' ? 'crosshair' :
+    mode === 'erase' ? 'cell' :
+    panning ? 'grabbing' : 'grab';
+
   return (
     <div
       ref={wrapRef}
       className={`absolute inset-0 board-bg no-select ${dragOver ? 'ring-4 ring-inset ring-blue-400/50' : ''}`}
-      style={{ cursor: drawMode ? 'crosshair' : panning ? 'grabbing' : 'grab' }}
+      style={{ cursor }}
       onPointerDown={onBgPointerDown}
       onPointerMove={onBgPointerMove}
       onPointerUp={onBgPointerUp}
@@ -185,15 +184,15 @@ export default function Canvas({
     >
       <div
         className="absolute origin-top-left"
-        style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+        style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}
       >
         {items.map((it) => (
           <ItemView
             key={it.id}
             item={it}
             selected={selected === it.id}
-            scale={view.scale}
-            interactive={!drawMode}
+            scale={SCALE}
+            interactive={interactive}
             onSelect={() => setSelected(it.id)}
             onUpdate={(patch) => onUpdate(it.id, patch)}
             onDelete={() => onDelete(it.id)}
@@ -202,9 +201,8 @@ export default function Canvas({
         ))}
       </div>
 
-      {/* Stroke layer always renders on top of items in world space. */}
       <StrokeLayer
-        view={view}
+        view={{ x: pan.x, y: pan.y, scale: SCALE }}
         strokes={strokes}
         drawMode={drawMode}
         color={drawColor}
@@ -213,10 +211,6 @@ export default function Canvas({
         onChange={onSetStrokes}
         toWorld={toWorld}
       />
-
-      <div className="absolute bottom-3 right-3 text-xs text-ink/50 bg-white/70 rounded px-2 py-1 pointer-events-none">
-        {Math.round(view.scale * 100)}%
-      </div>
     </div>
   );
 }

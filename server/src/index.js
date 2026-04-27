@@ -35,11 +35,13 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // Diagnostic — shows what paths the server resolved to. Safe to leave enabled.
 app.get('/api/_debug', (_req, res) => {
+  let uploadContents = null;
+  try { uploadContents = fs.existsSync(UPLOAD_DIR) ? fs.readdirSync(UPLOAD_DIR).slice(0, 50) : null; } catch (e) { uploadContents = `error: ${e.message}`; }
   res.json({
     nodeEnv: process.env.NODE_ENV,
     cwd: process.cwd(),
     dirname: __dirname,
-    uploadDir: { path: UPLOAD_DIR, exists: fs.existsSync(UPLOAD_DIR) },
+    uploadDir: { path: UPLOAD_DIR, exists: fs.existsSync(UPLOAD_DIR), contents: uploadContents },
     clientDist: { path: CLIENT_DIST, exists: fs.existsSync(CLIENT_DIST) },
     clientIndex: { path: CLIENT_INDEX, exists: fs.existsSync(CLIENT_INDEX) },
     distContents: fs.existsSync(CLIENT_DIST) ? fs.readdirSync(CLIENT_DIST) : null,

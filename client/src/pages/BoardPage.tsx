@@ -5,7 +5,7 @@ import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
 import Canvas from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
 import Breadcrumbs from '../components/Breadcrumbs';
-import DrawToolbar from '../components/DrawToolbar';
+import DrawToolbar, { type Mode } from '../components/DrawToolbar';
 
 export default function BoardPage() {
   const { code, boardId } = useParams();
@@ -19,11 +19,9 @@ export default function BoardPage() {
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
 
-  // Draw mode state
-  const [drawMode, setDrawMode] = useState(false);
+  const [mode, setMode] = useState<Mode>('drag');
   const [drawColor, setDrawColor] = useState('#1b1b1b');
   const [drawWidth, setDrawWidth] = useState(2);
-  const [eraser, setEraser] = useState(false);
 
   const load = useCallback(async () => {
     if (!code) return;
@@ -50,7 +48,6 @@ export default function BoardPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Debounced autosave covering items, strokes, and name.
   const savedRef = useRef<string>('');
   useEffect(() => {
     if (!board) return;
@@ -124,23 +121,20 @@ export default function BoardPage() {
           onRename={setName}
         />
         <DrawToolbar
-          drawMode={drawMode}
+          mode={mode}
           color={drawColor}
           width={drawWidth}
-          eraser={eraser}
-          onToggle={() => { setDrawMode((m) => !m); setEraser(false); }}
+          onMode={setMode}
           onColor={setDrawColor}
           onWidth={setDrawWidth}
-          onEraser={() => setEraser((x) => !x)}
           onClear={() => setStrokes([])}
         />
         <Canvas
           items={items}
           strokes={strokes}
-          drawMode={drawMode}
+          mode={mode}
           drawColor={drawColor}
           drawWidth={drawWidth}
-          eraser={eraser}
           onUpdate={updateItem}
           onDelete={deleteItem}
           onAdd={addItem}

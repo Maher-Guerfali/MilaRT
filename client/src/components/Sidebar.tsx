@@ -67,18 +67,15 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, saving, lastSavedA
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const { url } = await api.uploadImage(file);
-    const img = new Image();
-    img.onload = () => {
-      const maxW = 360;
-      const scale = Math.min(1, maxW / img.width);
-      onAdd(newItem({
-        type: 'image',
-        w: img.width * scale, h: img.height * scale,
-        data: { url },
-      }));
-    };
-    img.src = url;
+    try {
+      const { url } = await api.uploadImage(file);
+      // Place the card immediately with a default size. Don't wait on
+      // image preload — if the URL ever 404s the card still appears so
+      // the broken state is visible (and deletable).
+      onAdd(newItem({ type: 'image', w: 280, h: 200, data: { url } }));
+    } catch (err) {
+      alert('Image upload failed: ' + (err as Error).message);
+    }
   }
 
   function copyCode() {
