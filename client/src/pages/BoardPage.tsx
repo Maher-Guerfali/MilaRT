@@ -1,21 +1,29 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
-import type { Board, BaseItem, BoardRefData } from '../types';
+import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
 import Canvas from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
 import Breadcrumbs from '../components/Breadcrumbs';
+import DrawToolbar from '../components/DrawToolbar';
 
 export default function BoardPage() {
   const { code, boardId } = useParams();
   const nav = useNavigate();
   const [board, setBoard] = useState<Board | null>(null);
   const [items, setItems] = useState<BaseItem[]>([]);
+  const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+
+  // Draw mode state
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawColor, setDrawColor] = useState('#1b1b1b');
+  const [drawWidth, setDrawWidth] = useState(2);
+  const [eraser, setEraser] = useState(false);
 
   const load = useCallback(async () => {
     if (!code) return;
@@ -30,6 +38,7 @@ export default function BoardPage() {
       const b = await api.getBoard(targetId);
       setBoard(b);
       setItems(b.items);
+      setStrokes(b.strokes || []);
       setName(b.name);
       setLastSavedAt(new Date(b.updatedAt));
     } catch (e) {
@@ -41,12 +50,12 @@ export default function BoardPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Debounced autosave. We snapshot items + name together so renames also save.
+  // Debounced autosave covering items, strokes, and name.
   const savedRef = useRef<string>('');
   useEffect(() => {
     if (!board) return;
-    const snap = JSON.stringify({ items, name });
-    const initial = JSON.stringify({ items: board.items, name: board.name });
+    const snap = JSON.stringify({ items, strokes, name });
+    const initial = JSON.stringify({ items: board.items, strokes: board.strokes || [], name: board.name });
     if (savedRef.current === '' && snap === initial) {
       savedRef.current = snap;
       return;
@@ -55,7 +64,7 @@ export default function BoardPage() {
     setSaving('saving');
     const t = setTimeout(async () => {
       try {
-        const res = await api.saveBoard(board._id, items, name);
+        const res = await api.saveBoard(board._id, items, strokes, name);
         savedRef.current = snap;
         setSaving('saved');
         setLastSavedAt(new Date(res.updatedAt));
@@ -64,7 +73,7 @@ export default function BoardPage() {
       }
     }, 1500);
     return () => clearTimeout(t);
-  }, [items, name, board]);
+  }, [items, strokes, name, board]);
 
   function addItem(item: BaseItem) {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
@@ -89,9 +98,8 @@ export default function BoardPage() {
         x.id === itemId ? { ...x, data: { ...(x.data as object), boardId: bid } } : x
       );
       setItems(updated);
-      // Persist immediately so the link survives even if the user navigates away fast.
-      await api.saveBoard(board._id, updated, name);
-      savedRef.current = JSON.stringify({ items: updated, name });
+      await api.saveBoard(board._id, updated, strokes, name);
+      savedRef.current = JSON.stringify({ items: updated, strokes, name });
     }
     nav(`/r/${code}/b/${bid}`);
   }
@@ -115,11 +123,28 @@ export default function BoardPage() {
           currentName={name}
           onRename={setName}
         />
+        <DrawToolbar
+          drawMode={drawMode}
+          color={drawColor}
+          width={drawWidth}
+          eraser={eraser}
+          onToggle={() => { setDrawMode((m) => !m); setEraser(false); }}
+          onColor={setDrawColor}
+          onWidth={setDrawWidth}
+          onEraser={() => setEraser((x) => !x)}
+          onClear={() => setStrokes([])}
+        />
         <Canvas
           items={items}
+          strokes={strokes}
+          drawMode={drawMode}
+          drawColor={drawColor}
+          drawWidth={drawWidth}
+          eraser={eraser}
           onUpdate={updateItem}
           onDelete={deleteItem}
           onAdd={addItem}
+          onSetStrokes={setStrokes}
           onEnterBoard={enterBoard}
         />
       </div>

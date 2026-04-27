@@ -1,4 +1,4 @@
-export type ItemType = 'sticky' | 'image' | 'link' | 'board' | 'handwriting';
+export type ItemType = 'sticky' | 'image' | 'link' | 'board';
 
 export interface BaseItem {
   id: string;
@@ -19,10 +19,9 @@ export interface BoardRefData { boardId: string; name: string; }
 export interface Stroke {
   color: string;
   width: number;
-  // [x, y, pressure] triplets, flat for compactness
+  // [x, y, pressure] triplets stored in board (world) coordinates.
   points: number[];
 }
-export interface HandwritingData { strokes: Stroke[]; }
 
 export interface Board {
   _id: string;
@@ -30,6 +29,7 @@ export interface Board {
   parentBoardId: string | null;
   name: string;
   items: BaseItem[];
+  strokes: Stroke[];
   updatedAt: string;
   breadcrumbs: { _id: string; name: string }[];
 }

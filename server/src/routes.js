@@ -101,16 +101,18 @@ export function makeRoutes() {
       parentBoardId: board.parentBoardId,
       name: board.name,
       items: board.items,
+      strokes: board.strokes || [],
       updatedAt: board.updatedAt,
       breadcrumbs: crumbs,
     });
   });
 
-  // Save a board (full replace of items + optional name). Autosave target.
+  // Save a board (full replace of items/strokes + optional name). Autosave target.
   r.put('/boards/:id', async (req, res) => {
-    const { items, name } = req.body || {};
+    const { items, strokes, name } = req.body || {};
     const update = {};
     if (Array.isArray(items)) update.items = items;
+    if (Array.isArray(strokes)) update.strokes = strokes;
     if (typeof name === 'string') update.name = name.slice(0, 80);
     const board = await Board.findByIdAndUpdate(req.params.id, update, { new: true });
     if (!board) return res.status(404).json({ error: 'not_found' });

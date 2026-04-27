@@ -1,5 +1,8 @@
+import { useRef } from 'react';
 import { nanoid } from 'nanoid';
 import type { BaseItem } from '../types';
+import { api } from '../api';
+import { StickyIcon, LinkIcon, BoardIcon, ImageIcon } from './icons';
 
 interface Props {
   roomCode: string;
@@ -26,39 +29,57 @@ function newItem(partial: Partial<BaseItem>): BaseItem {
 }
 
 export default function Sidebar({ roomCode, onAdd, onRefresh, saving, lastSavedAt }: Props) {
-  const tools: { label: string; make: () => BaseItem }[] = [
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const tools = [
     {
       label: 'Sticky note',
-      make: () => newItem({
+      Icon: StickyIcon,
+      action: () => onAdd(newItem({
         type: 'sticky',
         data: { text: '', color: STICKY_COLORS[Math.floor(Math.random() * STICKY_COLORS.length)] },
-      }),
+      })),
     },
     {
       label: 'Link / text',
-      make: () => newItem({
-        type: 'link',
-        w: 260, h: 90,
+      Icon: LinkIcon,
+      action: () => onAdd(newItem({
+        type: 'link', w: 260, h: 90,
         data: { url: '', title: '' },
-      }),
+      })),
     },
     {
       label: 'Nested board',
-      make: () => newItem({
-        type: 'board',
-        w: 220, h: 140,
+      Icon: BoardIcon,
+      action: () => onAdd(newItem({
+        type: 'board', w: 220, h: 140,
         data: { name: 'New board' },
-      }),
+      })),
     },
     {
-      label: 'Handwriting',
-      make: () => newItem({
-        type: 'handwriting',
-        w: 320, h: 220,
-        data: { strokes: [] },
-      }),
+      label: 'Upload image',
+      Icon: ImageIcon,
+      action: () => fileRef.current?.click(),
     },
   ];
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const { url } = await api.uploadImage(file);
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 360;
+      const scale = Math.min(1, maxW / img.width);
+      onAdd(newItem({
+        type: 'image',
+        w: img.width * scale, h: img.height * scale,
+        data: { url },
+      }));
+    };
+    img.src = url;
+  }
 
   function copyCode() {
     navigator.clipboard?.writeText(roomCode);
@@ -80,18 +101,30 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, saving, lastSavedA
         >{roomCode}</button>
       </div>
 
-      <div className="px-4 py-4 border-b border-black/5">
-        <div className="text-xs uppercase tracking-wider text-ink/50 mb-2">Add</div>
+      <div className="px-3 py-4 border-b border-black/5">
+        <div className="text-xs uppercase tracking-wider text-ink/50 mb-2 px-1">Add</div>
         <div className="flex flex-col gap-1">
-          {tools.map((t) => (
+          {tools.map(({ label, Icon, action }) => (
             <button
-              key={t.label}
-              onClick={() => onAdd(t.make())}
-              className="text-left rounded-md px-3 py-2 text-sm hover:bg-ink hover:text-paper"
-            >{t.label}</button>
+              key={label}
+              onClick={action}
+              className="flex items-center gap-3 text-left rounded-md px-3 py-2 text-sm hover:bg-ink hover:text-paper transition-colors"
+            >
+              <Icon size={18} />
+              <span>{label}</span>
+            </button>
           ))}
         </div>
-        <p className="text-xs text-ink/50 mt-3">Tip: paste an image anywhere on the board.</p>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={onFile}
+        />
+        <p className="text-xs text-ink/50 mt-3 px-1 leading-snug">
+          Tip: paste, drop, or upload images. Drag a card by its handle.
+        </p>
       </div>
 
       <div className="mt-auto px-4 py-4 border-t border-black/5 text-xs text-ink/60 space-y-2">

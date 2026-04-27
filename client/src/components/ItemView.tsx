@@ -1,45 +1,52 @@
 import { useRef, useState } from 'react';
 import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData } from '../types';
-import HandwritingPad from './HandwritingPad';
+import { GripIcon, TrashIcon } from './icons';
 
 interface Props {
   item: BaseItem;
   selected: boolean;
   scale: number;
+  interactive: boolean;
   onSelect: () => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
   onDelete: () => void;
   onEnterBoard: () => void;
 }
 
-export default function ItemView({ item, selected, scale, onSelect, onUpdate, onDelete, onEnterBoard }: Props) {
-  const dragRef = useRef<{ px: number; py: number; ix: number; iy: number; mode: 'move' | 'resize' } | null>(null);
+export default function ItemView({
+  item, selected, scale, interactive, onSelect, onUpdate, onDelete, onEnterBoard,
+}: Props) {
+  const dragRef = useRef<{ px: number; py: number; ix: number; iy: number; iw: number; ih: number; mode: 'move' | 'resize' } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   function startDrag(e: React.PointerEvent, mode: 'move' | 'resize') {
-    // Allow text selection inside content editors without starting a drag.
-    const t = e.target as HTMLElement;
-    if (mode === 'move' && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (!interactive) return;
     e.stopPropagation();
     onSelect();
-    dragRef.current = { px: e.clientX, py: e.clientY, ix: item.x, iy: item.y, mode };
-    if (mode === 'move') setGhost({ x: item.x, y: item.y, w: item.w, h: item.h });
-    if (mode === 'resize') setGhost({ x: item.x, y: item.y, w: item.w, h: item.h });
+    dragRef.current = {
+      px: e.clientX, py: e.clientY,
+      ix: item.x, iy: item.y,
+      iw: item.w, ih: item.h,
+      mode,
+    };
+    setGhost({ x: item.x, y: item.y, w: item.w, h: item.h });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function onDrag(e: React.PointerEvent) {
-    if (!dragRef.current) return;
-    const dx = (e.clientX - dragRef.current.px) / scale;
-    const dy = (e.clientY - dragRef.current.py) / scale;
-    if (dragRef.current.mode === 'move') {
-      setGhost({ x: dragRef.current.ix + dx, y: dragRef.current.iy + dy, w: item.w, h: item.h });
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = (e.clientX - d.px) / scale;
+    const dy = (e.clientY - d.py) / scale;
+    if (d.mode === 'move') {
+      setGhost({ x: d.ix + dx, y: d.iy + dy, w: d.iw, h: d.ih });
     } else {
-      setGhost({ x: item.x, y: item.y, w: Math.max(80, item.w + dx), h: Math.max(60, item.h + dy) });
+      setGhost({ x: d.ix, y: d.iy, w: Math.max(80, d.iw + dx), h: Math.max(60, d.ih + dy) });
     }
   }
   function endDrag(e: React.PointerEvent) {
-    if (!dragRef.current || !ghost) return;
-    if (dragRef.current.mode === 'move') onUpdate({ x: ghost.x, y: ghost.y });
+    const d = dragRef.current;
+    if (!d || !ghost) return;
+    if (d.mode === 'move') onUpdate({ x: ghost.x, y: ghost.y });
     else onUpdate({ w: ghost.w, h: ghost.h });
     dragRef.current = null;
     setGhost(null);
@@ -54,12 +61,12 @@ export default function ItemView({ item, selected, scale, onSelect, onUpdate, on
   return (
     <div
       data-item
-      className={`absolute rounded-xl shadow-sm bg-white ${ringCls}`}
-      style={{ left: pos.x, top: pos.y, width: pos.w, height: pos.h }}
-      onPointerDown={(e) => startDrag(e, 'move')}
-      onPointerMove={onDrag}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      className={`group absolute rounded-xl shadow-sm bg-white ${ringCls}`}
+      style={{
+        left: pos.x, top: pos.y, width: pos.w, height: pos.h,
+        pointerEvents: interactive ? 'auto' : 'none',
+      }}
+      onPointerDown={(e) => { e.stopPropagation(); onSelect(); }}
       onDoubleClick={(e) => {
         if (item.type === 'board') { e.stopPropagation(); onEnterBoard(); }
       }}
@@ -68,16 +75,27 @@ export default function ItemView({ item, selected, scale, onSelect, onUpdate, on
       {item.type === 'image' && <ImageBox item={item} />}
       {item.type === 'link' && <LinkBox item={item} onUpdate={onUpdate} />}
       {item.type === 'board' && <BoardRefBox item={item} onUpdate={onUpdate} onEnter={onEnterBoard} />}
-      {item.type === 'handwriting' && <HandwritingPad item={item} onUpdate={onUpdate} />}
+
+      {/* Drag handle — top-left grip, only this initiates a move */}
+      <button
+        title="Drag"
+        className={`absolute -top-2 -left-2 w-7 h-7 rounded-full bg-white shadow ring-1 ring-black/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        onPointerDown={(e) => startDrag(e, 'move')}
+        onPointerMove={onDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        <GripIcon size={14} />
+      </button>
 
       {selected && (
         <>
           <button
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="absolute -top-3 -right-3 w-6 h-6 rounded-full bg-ink text-paper text-xs flex items-center justify-center shadow"
+            className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-ink text-paper shadow flex items-center justify-center"
             title="Delete"
-          >×</button>
+          ><TrashIcon size={14} /></button>
           <div
             className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
             onPointerDown={(e) => startDrag(e, 'resize')}
@@ -85,8 +103,7 @@ export default function ItemView({ item, selected, scale, onSelect, onUpdate, on
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
             style={{
-              background:
-                'linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.25) 50%)',
+              background: 'linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.25) 50%)',
               borderBottomRightRadius: 12,
             }}
           />
@@ -183,4 +200,3 @@ function BoardRefBox({ item, onUpdate, onEnter }: { item: BaseItem; onUpdate: (p
     </div>
   );
 }
-
