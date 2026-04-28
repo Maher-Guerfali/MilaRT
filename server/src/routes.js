@@ -5,8 +5,29 @@ import fs from 'node:fs';
 import { customAlphabet } from 'nanoid';
 import { Room, Board } from './models.js';
 
-const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
-const makeRoomCode = customAlphabet(ROOM_CODE_ALPHABET, 6);
+// Fallback random code if the user creates a room without picking a name.
+const RANDOM_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // no 0/o/1/l/i
+const makeRandomCode = customAlphabet(RANDOM_ALPHABET, 6);
+
+// Turn a free-text room name into a URL-safe, lowercase slug.
+function slugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 30);
+}
+
+// Case-insensitive room lookup so old random codes (uppercase) and new
+// user-named slugs (lowercase) both resolve.
+async function findRoomByAnyCase(raw) {
+  const t = (raw || '').trim();
+  if (!t) return null;
+  return Room.findOne({ code: { $in: [t, t.toLowerCase(), t.toUpperCase()] } });
+}
 
 export function makeRoutes({ uploadDir }) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -29,35 +50,36 @@ export function makeRoutes({ uploadDir }) {
 
   const r = Router();
 
-  // Create a new room + its root board.
+  // Create a new room. The user-supplied name is BOTH the human display
+  // name (kept as-typed) AND the slugified room code (lowercase, URL-safe).
+  // If no name is given, fall back to a 6-char random slug.
   r.post('/rooms', async (req, res) => {
-    const name = (req.body?.name || '').toString().slice(0, 80) || 'My room';
-    // Retry a few times in the astronomically unlikely event of a code collision.
-    for (let i = 0; i < 5; i++) {
-      const code = makeRoomCode();
-      const exists = await Room.exists({ code });
-      if (exists) continue;
-      const room = await Room.create({ code, name });
-      const board = await Board.create({
-        roomId: room._id,
-        parentBoardId: null,
-        name: 'Home',
-      });
-      room.rootBoardId = board._id;
-      await room.save();
-      return res.json({
-        code: room.code,
-        name: room.name,
-        rootBoardId: board._id,
-      });
+    const rawName = (req.body?.name || '').toString().slice(0, 80);
+    let code = slugify(rawName);
+    if (!code) {
+      // No name -> generate a random one and retry on the off chance of collision.
+      for (let i = 0; i < 5; i++) {
+        const candidate = makeRandomCode();
+        if (!(await Room.exists({ code: candidate }))) { code = candidate; break; }
+      }
     }
-    res.status(500).json({ error: 'could_not_allocate_code' });
+    if (!code || code.length < 2) return res.status(400).json({ error: 'name_too_short' });
+
+    if (await findRoomByAnyCase(code)) {
+      return res.status(409).json({ error: 'name_taken', code });
+    }
+
+    const displayName = rawName || code;
+    const room = await Room.create({ code, name: displayName });
+    const board = await Board.create({ roomId: room._id, parentBoardId: null, name: 'Home' });
+    room.rootBoardId = board._id;
+    await room.save();
+    res.json({ code: room.code, name: room.name, rootBoardId: board._id });
   });
 
-  // Look up a room by its code.
+  // Look up a room by its code (case-insensitive).
   r.get('/rooms/:code', async (req, res) => {
-    const code = req.params.code.toUpperCase();
-    const room = await Room.findOne({ code });
+    const room = await findRoomByAnyCase(req.params.code);
     if (!room) return res.status(404).json({ error: 'not_found' });
     res.json({
       code: room.code,
@@ -69,7 +91,7 @@ export function makeRoutes({ uploadDir }) {
   // Create a nested board inside an existing one.
   r.post('/boards', async (req, res) => {
     const { roomCode, parentBoardId, name } = req.body || {};
-    const room = await Room.findOne({ code: (roomCode || '').toUpperCase() });
+    const room = await findRoomByAnyCase(roomCode);
     if (!room) return res.status(404).json({ error: 'room_not_found' });
     const parent = await Board.findOne({ _id: parentBoardId, roomId: room._id });
     if (!parent) return res.status(404).json({ error: 'parent_not_found' });

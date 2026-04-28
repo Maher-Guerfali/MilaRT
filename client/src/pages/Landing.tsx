@@ -4,31 +4,38 @@ import { api } from '../api';
 
 export default function Landing() {
   const nav = useNavigate();
-  const [code, setCode] = useState('');
-  const [name, setName] = useState('');
+  const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function handleCreate() {
+  const trimmed = value.trim();
+
+  async function handleJoin() {
+    if (!trimmed) { setErr('Type a room name first.'); return; }
     setBusy(true); setErr(null);
     try {
-      const room = await api.createRoom(name || undefined);
+      const room = await api.getRoom(trimmed);
       nav(`/r/${room.code}`);
-    } catch (e) {
-      setErr((e as Error).message);
+    } catch {
+      setErr(`No room called "${trimmed}". You can Create it instead.`);
     } finally { setBusy(false); }
   }
 
-  async function handleJoin() {
-    const c = code.trim().toUpperCase();
-    if (c.length !== 6) { setErr('Room codes are 6 characters.'); return; }
+  async function handleCreate() {
+    if (!trimmed) { setErr('Type a room name first.'); return; }
     setBusy(true); setErr(null);
     try {
-      await api.getRoom(c);
-      nav(`/r/${c}`);
+      const room = await api.createRoom(trimmed);
+      nav(`/r/${room.code}`);
     } catch (e) {
-      setErr('No room with that code.');
-      void e;
+      const msg = (e as Error).message || '';
+      if (msg.includes('409') || msg.includes('name_taken')) {
+        setErr(`"${trimmed}" is already taken — try Join, or pick a different name.`);
+      } else if (msg.includes('400') || msg.includes('too_short')) {
+        setErr('Use at least 2 letters/numbers.');
+      } else {
+        setErr(msg);
+      }
     } finally { setBusy(false); }
   }
 
@@ -41,38 +48,37 @@ export default function Landing() {
         </div>
         <p className="text-ink/60 mb-8">A visual board for you and your people.</p>
 
-        <div className="rounded-2xl bg-white shadow-sm border border-black/5 p-6 mb-4">
-          <label className="block text-sm font-medium mb-2">Create a new room</label>
-          <input
-            className="w-full rounded-lg border border-black/10 bg-paper px-3 py-2 mb-3 focus:outline-none focus:border-black/40"
-            placeholder="Room name (optional)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <button
-            onClick={handleCreate}
-            disabled={busy}
-            className="w-full rounded-lg bg-ink text-paper py-2 font-medium hover:opacity-90 disabled:opacity-50"
-          >Create room</button>
-        </div>
-
-        <div className="rounded-2xl bg-white shadow-sm border border-black/5 p-6">
-          <label className="block text-sm font-medium mb-2">Join with a code</label>
-          <div className="flex gap-2">
+        <div className="rounded-2xl bg-white shadow-sm border border-black/5 p-5">
+          <div className="flex gap-2 items-stretch">
             <input
-              className="flex-1 rounded-lg border border-black/10 bg-paper px-3 py-2 font-mono uppercase tracking-widest focus:outline-none focus:border-black/40"
-              placeholder="ABC123"
-              value={code}
-              maxLength={6}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
+              autoFocus
+              className="flex-1 rounded-lg border border-black/10 bg-paper px-3 py-2 focus:outline-none focus:border-black/40"
+              placeholder="Room name (e.g. maher)"
+              value={value}
+              maxLength={30}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (e.shiftKey) handleCreate(); else handleJoin();
+                }
+              }}
             />
-            <button
-              onClick={handleJoin}
-              disabled={busy}
-              className="rounded-lg border border-ink/20 px-4 py-2 font-medium hover:bg-ink hover:text-paper disabled:opacity-50"
-            >Join</button>
+            <div className="flex flex-col gap-1 w-24">
+              <button
+                onClick={handleJoin}
+                disabled={busy}
+                className="rounded-lg bg-ink text-paper py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+              >Join</button>
+              <button
+                onClick={handleCreate}
+                disabled={busy}
+                className="rounded-md text-xs text-ink/70 hover:text-ink hover:underline py-1"
+              >Create new</button>
+            </div>
           </div>
+          <p className="text-xs text-ink/50 mt-3">
+            Pick any name (2–30 chars, letters/numbers/hyphens). The name <em>is</em> the link your friends use.
+          </p>
         </div>
 
         {err && <p className="mt-4 text-sm text-red-600">{err}</p>}
