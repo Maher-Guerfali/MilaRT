@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
-import Canvas from '../components/Canvas';
+import Canvas, { type CanvasHandle } from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
 import Breadcrumbs from '../components/Breadcrumbs';
 import DrawToolbar, { type Mode } from '../components/DrawToolbar';
@@ -34,6 +34,7 @@ export default function BoardPage() {
   }
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const canvasRef = useRef<CanvasHandle>(null);
 
   const load = useCallback(async () => {
     if (!code) return;
@@ -87,6 +88,16 @@ export default function BoardPage() {
   function addItem(item: BaseItem) {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
   }
+  // Sidebar passes a partial template; we drop it at the visible center.
+  // Falls back to (0,0) on the very first render before the canvas mounts.
+  function addItemAtCenter(template: Omit<BaseItem, 'x' | 'y'>) {
+    const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
+    addItem({
+      ...template,
+      x: c.x - template.w / 2,
+      y: c.y - template.h / 2,
+    } as BaseItem);
+  }
   function updateItem(id: string, patch: Partial<BaseItem>) {
     setItems((xs) => xs.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
@@ -120,7 +131,7 @@ export default function BoardPage() {
     <div className="h-full w-full flex">
       <Sidebar
         roomCode={code!}
-        onAdd={addItem}
+        onAdd={addItemAtCenter}
         onRefresh={load}
         onOpenSettings={() => setSettingsOpen(true)}
         saving={saving}
@@ -158,6 +169,7 @@ export default function BoardPage() {
           onPenOnly={togglePenOnly}
         />
         <Canvas
+          ref={canvasRef}
           items={items}
           strokes={strokes}
           mode={mode}

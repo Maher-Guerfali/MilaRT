@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
 import type { BaseItem, Stroke } from '../types';
 import { api } from '../api';
 import ItemView from './ItemView';
 import StrokeLayer from './StrokeLayer';
 import type { Mode } from './DrawToolbar';
+import { PlusIcon, MinusIcon, FitIcon } from './icons';
 
 interface Props {
   items: BaseItem[];
@@ -20,16 +21,19 @@ interface Props {
   onEnterBoard: (itemId: string) => void;
 }
 
-// Zoom is intentionally locked at 1 for now — the variable scale path was
-// causing confusion and an unrelated zoom bug. Pan still works.
-const SCALE = 1;
+export interface CanvasHandle {
+  getCenter: () => { x: number; y: number };
+}
 
-export default function Canvas({
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 2.5;
+
+const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
   items, strokes, mode, drawColor, drawWidth, penOnly,
   onUpdate, onDelete, onAdd, onSetStrokes, onEnterBoard,
-}: Props) {
+}, ref) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [selected, setSelected] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -41,44 +45,67 @@ export default function Canvas({
 
   function toWorld(clientX: number, clientY: number) {
     const rect = wrapRef.current!.getBoundingClientRect();
-    return { x: clientX - rect.left - pan.x, y: clientY - rect.top - pan.y };
+    return {
+      x: (clientX - rect.left - view.x) / view.scale,
+      y: (clientY - rect.top - view.y) / view.scale,
+    };
   }
   function centerOfView() {
     const rect = wrapRef.current!.getBoundingClientRect();
     return toWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
+  // Expose to parent so the sidebar can drop new items at the visible center.
+  useImperativeHandle(ref, () => ({ getCenter: centerOfView }));
+
+  function zoomAround(clientX: number, clientY: number, nextScale: number) {
+    const rect = wrapRef.current!.getBoundingClientRect();
+    const cx = clientX - rect.left;
+    const cy = clientY - rect.top;
+    const worldX = (cx - view.x) / view.scale;
+    const worldY = (cy - view.y) / view.scale;
+    setView({ scale: nextScale, x: cx - worldX * nextScale, y: cy - worldY * nextScale });
+  }
+
+  function bumpZoom(delta: number) {
+    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale * (1 + delta)));
+    const rect = wrapRef.current!.getBoundingClientRect();
+    zoomAround(rect.left + rect.width / 2, rect.top + rect.height / 2, next);
+  }
+  function resetView() { setView({ x: 0, y: 0, scale: 1 }); }
+
   function onBgPointerDown(e: React.PointerEvent) {
     if (drawMode) return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
     setSelected(null);
     setPanning(true);
-    panStart.current = { px: e.clientX, py: e.clientY, vx: pan.x, vy: pan.y };
+    panStart.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function onBgPointerMove(e: React.PointerEvent) {
     const ps = panStart.current;
     if (!panning || !ps) return;
-    const dx = e.clientX - ps.px;
-    const dy = e.clientY - ps.py;
-    setPan({ x: ps.vx + dx, y: ps.vy + dy });
+    setView((v) => ({ ...v, x: ps.vx + (e.clientX - ps.px), y: ps.vy + (e.clientY - ps.py) }));
   }
   function onBgPointerUp(e: React.PointerEvent) {
     setPanning(false);
     panStart.current = null;
-    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {
-      // ignore
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+
+  // Trackpad pinch arrives as wheel + ctrlKey on most browsers; mouse-wheel
+  // zoom requires Cmd/Ctrl. Plain wheel pans the board.
+  function onWheel(e: React.WheelEvent) {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = -e.deltaY * 0.0015;
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale * (1 + delta)));
+      zoomAround(e.clientX, e.clientY, next);
+    } else {
+      setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
     }
   }
 
-  // Wheel pans the board. Zoom (Ctrl+wheel) intentionally disabled for now.
-  function onWheel(e: React.WheelEvent) {
-    setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
-  }
-
-  // Add an image item with a sane default size and let the browser load it
-  // in place. Avoids "nothing happens" when the URL 404s — at least a card
-  // appears so the user can see the broken state and delete it.
   function placeImageNow(url: string, cx: number, cy: number, defaultW = 280, defaultH = 200) {
     onAdd({
       id: nanoid(10),
@@ -140,7 +167,7 @@ export default function Canvas({
           type: isUrl ? 'link' : 'sticky',
           x: pos.x - 110, y: pos.y - 60,
           w: isUrl ? 260 : 220,
-          h: isUrl ? 90 : 160,
+          h: isUrl ? 60 : 160,
           z: 0,
           data: isUrl ? { url: text.trim(), title: text.trim() } : { text, color: '#fff7ae' },
         });
@@ -185,14 +212,14 @@ export default function Canvas({
     >
       <div
         className="absolute origin-top-left"
-        style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}
+        style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
       >
         {items.map((it) => (
           <ItemView
             key={it.id}
             item={it}
             selected={selected === it.id}
-            scale={SCALE}
+            scale={view.scale}
             interactive={interactive}
             onSelect={() => setSelected(it.id)}
             onUpdate={(patch) => onUpdate(it.id, patch)}
@@ -203,7 +230,7 @@ export default function Canvas({
       </div>
 
       <StrokeLayer
-        view={{ x: pan.x, y: pan.y, scale: SCALE }}
+        view={view}
         strokes={strokes}
         drawMode={drawMode}
         color={drawColor}
@@ -213,6 +240,30 @@ export default function Canvas({
         onChange={onSetStrokes}
         toWorld={toWorld}
       />
+
+      {/* Bottom-right zoom dock */}
+      <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/95 backdrop-blur rounded-lg shadow border border-black/10 p-1 text-xs">
+        <button
+          onClick={() => bumpZoom(-0.15)}
+          className="w-7 h-7 rounded-md hover:bg-ink/5 flex items-center justify-center"
+          title="Zoom out"
+        ><MinusIcon size={14} /></button>
+        <button
+          onClick={resetView}
+          className="px-2 h-7 rounded-md hover:bg-ink/5 flex items-center gap-1 tabular-nums"
+          title="Reset view (100%)"
+        >
+          <FitIcon size={12} />
+          <span>{Math.round(view.scale * 100)}%</span>
+        </button>
+        <button
+          onClick={() => bumpZoom(0.15)}
+          className="w-7 h-7 rounded-md hover:bg-ink/5 flex items-center justify-center"
+          title="Zoom in"
+        ><PlusIcon size={14} /></button>
+      </div>
     </div>
   );
-}
+});
+
+export default Canvas;

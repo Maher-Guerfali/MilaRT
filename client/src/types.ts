@@ -14,7 +14,12 @@ export interface BaseItem {
 export interface StickyData { text: string; color: string; }
 export interface ImageData { url: string; }
 export interface LinkData { url: string; title: string; }
-export interface BoardRefData { boardId: string; name: string; }
+export interface BoardRefData {
+  boardId: string;
+  name: string;
+  // Optional custom thumbnail uploaded by the user.
+  imageUrl?: string;
+}
 
 export interface Stroke {
   color: string;

@@ -4,9 +4,11 @@ import type { BaseItem } from '../types';
 import { api } from '../api';
 import { StickyIcon, LinkIcon, BoardIcon, ImageIcon, SettingsIcon } from './icons';
 
+type ItemTemplate = Omit<BaseItem, 'x' | 'y'>;
+
 interface Props {
   roomCode: string;
-  onAdd: (item: BaseItem) => void;
+  onAdd: (template: ItemTemplate) => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
   saving: 'idle' | 'saving' | 'saved' | 'error';
@@ -15,18 +17,16 @@ interface Props {
 
 const STICKY_COLORS = ['#fff7ae', '#d8f2c4', '#ffd1d1', '#d5e8ff', '#eadcff'];
 
-function newItem(partial: Partial<BaseItem>): BaseItem {
+function template(partial: Partial<BaseItem>): ItemTemplate {
   return {
     id: nanoid(10),
     type: 'sticky',
-    x: 100 + Math.random() * 120,
-    y: 100 + Math.random() * 120,
     w: 220,
     h: 160,
     z: 0,
     data: {},
     ...partial,
-  } as BaseItem;
+  } as ItemTemplate;
 }
 
 export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, saving, lastSavedAt }: Props) {
@@ -36,24 +36,24 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
     {
       label: 'Sticky note',
       Icon: StickyIcon,
-      action: () => onAdd(newItem({
+      action: () => onAdd(template({
         type: 'sticky',
         data: { text: '', color: STICKY_COLORS[Math.floor(Math.random() * STICKY_COLORS.length)] },
       })),
     },
     {
-      label: 'Link / text',
+      label: 'Text',
       Icon: LinkIcon,
-      action: () => onAdd(newItem({
-        type: 'link', w: 260, h: 90,
+      action: () => onAdd(template({
+        type: 'link', w: 240, h: 60,
         data: { url: '', title: '' },
       })),
     },
     {
       label: 'Nested board',
       Icon: BoardIcon,
-      action: () => onAdd(newItem({
-        type: 'board', w: 220, h: 140,
+      action: () => onAdd(template({
+        type: 'board', w: 110, h: 130,
         data: { name: 'New board' },
       })),
     },
@@ -70,10 +70,7 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
     if (!file) return;
     try {
       const { url } = await api.uploadImage(file);
-      // Place the card immediately with a default size. Don't wait on
-      // image preload — if the URL ever 404s the card still appears so
-      // the broken state is visible (and deletable).
-      onAdd(newItem({ type: 'image', w: 280, h: 200, data: { url } }));
+      onAdd(template({ type: 'image', w: 280, h: 200, data: { url } }));
     } catch (err) {
       alert('Image upload failed: ' + (err as Error).message);
     }

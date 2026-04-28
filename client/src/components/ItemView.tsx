@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData } from '../types';
-import { GripIcon, TrashIcon } from './icons';
+import { api } from '../api';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -40,7 +41,7 @@ export default function ItemView({
     if (d.mode === 'move') {
       setGhost({ x: d.ix + dx, y: d.iy + dy, w: d.iw, h: d.ih });
     } else {
-      setGhost({ x: d.ix, y: d.iy, w: Math.max(80, d.iw + dx), h: Math.max(60, d.ih + dy) });
+      setGhost({ x: d.ix, y: d.iy, w: Math.max(60, d.iw + dx), h: Math.max(40, d.ih + dy) });
     }
   }
   function endDrag(e: React.PointerEvent) {
@@ -50,33 +51,41 @@ export default function ItemView({
     else onUpdate({ w: ghost.w, h: ghost.h });
     dragRef.current = null;
     setGhost(null);
-    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {
-      // ignore
-    }
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
 
   const pos = ghost ?? item;
+
+  // Link items render as bare text (no card). Other items keep the white
+  // card + ring; Board ref renders its own visual.
+  const isText = item.type === 'link';
+  const isBoard = item.type === 'board';
   const ringCls = selected ? 'ring-2 ring-ink/60' : 'ring-1 ring-black/5';
+  const bodyCls =
+    isText
+      ? '' // transparent body
+      : isBoard
+        ? '' // board ref has its own styling
+        : `rounded-xl shadow-sm bg-white ${ringCls}`;
 
   return (
     <div
       data-item
-      className={`group absolute rounded-xl shadow-sm bg-white ${ringCls}`}
+      className={`group absolute ${bodyCls}`}
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
       }}
       onPointerDown={(e) => { e.stopPropagation(); onSelect(); }}
-      onDoubleClick={(e) => {
-        if (item.type === 'board') { e.stopPropagation(); onEnterBoard(); }
-      }}
     >
       {item.type === 'sticky' && <Sticky item={item} onUpdate={onUpdate} />}
       {item.type === 'image' && <ImageBox item={item} />}
-      {item.type === 'link' && <LinkBox item={item} onUpdate={onUpdate} />}
-      {item.type === 'board' && <BoardRefBox item={item} onUpdate={onUpdate} onEnter={onEnterBoard} />}
+      {item.type === 'link' && <TextBox item={item} selected={selected} onUpdate={onUpdate} />}
+      {item.type === 'board' && (
+        <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnter={onEnterBoard} />
+      )}
 
-      {/* Drag handle — top-left grip, only this initiates a move */}
+      {/* Drag grip — only this initiates a move so the body stays interactive. */}
       <button
         title="Drag"
         className={`absolute -top-2 -left-2 w-7 h-7 rounded-full bg-white shadow ring-1 ring-black/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
@@ -97,8 +106,6 @@ export default function ItemView({
         ><TrashIcon size={14} /></button>
       )}
 
-      {/* Resize handle is visible whenever the item is hovered or selected,
-          so it works without first clicking-to-select (a common confusion). */}
       <div
         className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-white shadow ring-1 ring-black/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
           selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -144,63 +151,117 @@ function ImageBox({ item }: { item: BaseItem }) {
   );
 }
 
-function LinkBox({ item, onUpdate }: { item: BaseItem; onUpdate: (p: Partial<BaseItem>) => void }) {
+// Bare text item: no background, no card. Just typed text on the canvas.
+// URLs in the text are clickable when not focused.
+function TextBox({
+  item, selected, onUpdate,
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void }) {
   const d = item.data as Partial<LinkData>;
-  const isUrl = d.url && /^https?:\/\//i.test(d.url);
+  // Backwards compat — earlier versions stored {url, title}; merge them into a single string on first edit.
+  const initial = (d.title || d.url || '').toString();
+  const [editing, setEditing] = useState(false);
+  const isUrl = /^https?:\/\/\S+$/i.test(initial.trim());
+
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        className={`w-full h-full resize-none p-1 text-sm leading-snug bg-transparent focus:outline-none rounded ${selected ? 'ring-1 ring-ink/30' : ''}`}
+        value={initial}
+        placeholder="Type text or paste a link…"
+        onChange={(e) => onUpdate({ data: { url: '', title: e.target.value } })}
+        onBlur={() => setEditing(false)}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+    );
+  }
+
   return (
-    <div className="w-full h-full p-3 flex flex-col gap-1">
-      <input
-        className="w-full bg-transparent text-sm font-medium focus:outline-none"
-        placeholder="Title"
-        value={d.title ?? ''}
-        onChange={(e) => onUpdate({ data: { ...d, title: e.target.value } })}
-        onPointerDown={(e) => e.stopPropagation()}
-      />
-      <input
-        className="w-full bg-transparent text-xs text-ink/60 focus:outline-none"
-        placeholder="https://…"
-        value={d.url ?? ''}
-        onChange={(e) => onUpdate({ data: { ...d, url: e.target.value } })}
-        onPointerDown={(e) => e.stopPropagation()}
-      />
-      {isUrl && (
-        <a
-          href={d.url}
-          target="_blank"
-          rel="noreferrer"
-          className="text-xs text-blue-600 hover:underline mt-auto"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >Open link ↗</a>
-      )}
+    <div
+      className={`w-full h-full p-1 text-sm leading-snug whitespace-pre-wrap break-words ${
+        isUrl ? 'text-blue-700 underline' : 'text-ink'
+      }`}
+      onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+      onClick={(e) => {
+        if (isUrl && (e.metaKey || e.ctrlKey)) {
+          e.stopPropagation();
+          window.open(initial.trim(), '_blank', 'noopener,noreferrer');
+        }
+      }}
+      title={isUrl ? 'Cmd/Ctrl-click to open. Double-click to edit.' : 'Double-click to edit.'}
+    >
+      {initial || <span className="text-ink/40 italic">empty text…</span>}
     </div>
   );
 }
 
-function BoardRefBox({ item, onUpdate, onEnter }: { item: BaseItem; onUpdate: (p: Partial<BaseItem>) => void; onEnter: () => void }) {
+// Board ref: small rounded square + label below. Click the square to open.
+// When selected, hover-reveal a camera button to upload a custom thumbnail.
+function BoardRefBox({
+  item, selected, onUpdate, onEnter,
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnter: () => void }) {
   const d = item.data as Partial<BoardRefData>;
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function uploadCover(file: File) {
+    try {
+      const { url } = await api.uploadImage(file);
+      onUpdate({ data: { ...d, imageUrl: url } });
+    } catch (err) {
+      alert('Image upload failed: ' + (err as Error).message);
+    }
+  }
+
+  // Square fills the available width with a fixed aspect ratio (1:1).
+  // Label sits below at the bottom of the item.
   return (
-    <div className="w-full h-full flex flex-col">
-      <div className="flex-1 rounded-t-xl bg-ink/5 flex items-center justify-center text-ink/30">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-          <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-        </svg>
-      </div>
-      <div className="px-3 py-2 flex items-center gap-2 border-t border-black/5">
-        <input
-          className="flex-1 bg-transparent text-sm font-medium focus:outline-none"
-          value={d.name ?? ''}
-          placeholder="Board name"
-          onChange={(e) => onUpdate({ data: { ...d, name: e.target.value } })}
-          onPointerDown={(e) => e.stopPropagation()}
-        />
+    <div className="w-full h-full flex flex-col items-center">
+      <div className="relative w-full flex-1 min-h-0">
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onEnter(); }}
-          className="text-xs rounded-md border border-ink/20 px-2 py-1 hover:bg-ink hover:text-paper"
-        >Open</button>
+          className={`absolute inset-0 rounded-xl overflow-hidden flex items-center justify-center transition-shadow ${
+            selected ? 'ring-2 ring-ink/60' : 'ring-1 ring-black/10 hover:ring-ink/40'
+          }`}
+          style={{
+            background: d.imageUrl ? 'transparent' : '#ffffff',
+          }}
+          title={d.name ? `Open "${d.name}"` : 'Open board'}
+        >
+          {d.imageUrl ? (
+            <img src={d.imageUrl} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />
+          ) : (
+            <BoardIcon size={Math.min(48, Math.max(20, item.w * 0.4))} />
+          )}
+        </button>
+
+        {/* Hover-reveal upload button to set a custom thumbnail. */}
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+          className="absolute top-1 right-1 w-7 h-7 rounded-full bg-white/90 shadow ring-1 ring-black/10 flex items-center justify-center text-ink/70 hover:text-ink opacity-0 group-hover:opacity-100"
+          title="Set thumbnail"
+        ><CameraIcon size={14} /></button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) uploadCover(f);
+          }}
+        />
       </div>
+
+      <input
+        className="w-full mt-1 bg-transparent text-xs text-center font-medium focus:outline-none rounded px-1 py-0.5 hover:bg-white/50 focus:bg-white/80"
+        value={d.name ?? ''}
+        placeholder="Board name"
+        onChange={(e) => onUpdate({ data: { ...d, name: e.target.value } })}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
     </div>
   );
 }

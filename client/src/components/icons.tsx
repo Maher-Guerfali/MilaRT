@@ -143,3 +143,28 @@ export const LogoutIcon = wrap(
   </>
 );
 
+export const CameraIcon = wrap(
+  <>
+    <path d="M14.5 4h-5L7 7H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-3z" />
+    <circle cx="12" cy="13" r="3.5" />
+  </>
+);
+
+export const PlusIcon = wrap(
+  <>
+    <path d="M12 5v14" />
+    <path d="M5 12h14" />
+  </>
+);
+
+export const MinusIcon = wrap(<path d="M5 12h14" />);
+
+export const FitIcon = wrap(
+  <>
+    <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+    <path d="M4 15v4a1 1 0 0 0 1 1h4" />
+    <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
+    <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+  </>
+);
+
