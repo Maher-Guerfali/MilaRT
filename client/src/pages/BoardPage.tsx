@@ -6,6 +6,7 @@ import Canvas from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
 import Breadcrumbs from '../components/Breadcrumbs';
 import DrawToolbar, { type Mode } from '../components/DrawToolbar';
+import SettingsModal from '../components/SettingsModal';
 
 export default function BoardPage() {
   const { code, boardId } = useParams();
@@ -31,6 +32,8 @@ export default function BoardPage() {
     setPenOnly(v);
     try { localStorage.setItem('milart.penOnly', v ? '1' : '0'); } catch { /* ignore */ }
   }
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!code) return;
@@ -119,8 +122,23 @@ export default function BoardPage() {
         roomCode={code!}
         onAdd={addItem}
         onRefresh={load}
+        onOpenSettings={() => setSettingsOpen(true)}
         saving={saving}
         lastSavedAt={lastSavedAt}
+      />
+      <SettingsModal
+        open={settingsOpen}
+        roomCode={code!}
+        boardName={name}
+        items={items}
+        strokes={strokes}
+        onClose={() => setSettingsOpen(false)}
+        onImport={(p) => {
+          setItems(p.items);
+          setStrokes(p.strokes);
+          setName(p.name);
+          setSettingsOpen(false);
+        }}
       />
       <div className="flex-1 relative overflow-hidden">
         <Breadcrumbs

@@ -2,12 +2,13 @@ import { useRef } from 'react';
 import { nanoid } from 'nanoid';
 import type { BaseItem } from '../types';
 import { api } from '../api';
-import { StickyIcon, LinkIcon, BoardIcon, ImageIcon } from './icons';
+import { StickyIcon, LinkIcon, BoardIcon, ImageIcon, SettingsIcon } from './icons';
 
 interface Props {
   roomCode: string;
   onAdd: (item: BaseItem) => void;
   onRefresh: () => void;
+  onOpenSettings: () => void;
   saving: 'idle' | 'saving' | 'saved' | 'error';
   lastSavedAt: Date | null;
 }
@@ -28,7 +29,7 @@ function newItem(partial: Partial<BaseItem>): BaseItem {
   } as BaseItem;
 }
 
-export default function Sidebar({ roomCode, onAdd, onRefresh, saving, lastSavedAt }: Props) {
+export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, saving, lastSavedAt }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const tools = [
@@ -89,7 +90,11 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, saving, lastSavedA
 
   return (
     <aside className="w-56 shrink-0 border-r border-black/10 bg-white/70 backdrop-blur flex flex-col">
-      <div className="px-4 py-4 border-b border-black/5">
+      <div className="px-4 pt-4 pb-3 border-b border-black/5">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-7 h-7 rounded-md bg-ink text-paper flex items-center justify-center font-bold text-sm">M</div>
+          <span className="font-semibold tracking-tight">M-Board</span>
+        </div>
         <div className="text-xs uppercase tracking-wider text-ink/50">Room</div>
         <button
           onClick={copyCode}
@@ -126,10 +131,19 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, saving, lastSavedA
 
       <div className="mt-auto px-4 py-4 border-t border-black/5 text-xs text-ink/60 space-y-2">
         <div>{savingLabel}</div>
-        <button
-          onClick={onRefresh}
-          className="w-full rounded-md border border-ink/20 px-3 py-2 hover:bg-ink hover:text-paper"
-        >Refresh from server</button>
+        <div className="flex gap-2">
+          <button
+            onClick={onRefresh}
+            className="flex-1 rounded-md border border-ink/20 px-3 py-2 hover:bg-ink hover:text-paper"
+          >Refresh</button>
+          <button
+            onClick={onOpenSettings}
+            title="Settings"
+            className="rounded-md border border-ink/20 px-3 py-2 hover:bg-ink hover:text-paper flex items-center justify-center"
+          >
+            <SettingsIcon size={16} />
+          </button>
+        </div>
       </div>
     </aside>
   );

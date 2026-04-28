@@ -35,7 +35,10 @@ export default function Landing() {
   return (
     <div className="min-h-full flex items-center justify-center p-6">
       <div className="w-full max-w-md">
-        <h1 className="text-4xl font-semibold tracking-tight mb-2">MilaRT</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-10 h-10 rounded-lg bg-ink text-paper flex items-center justify-center font-bold text-lg">M</div>
+          <h1 className="text-4xl font-semibold tracking-tight">M-Board</h1>
+        </div>
         <p className="text-ink/60 mb-8">A visual board for you and your people.</p>
 
         <div className="rounded-2xl bg-white shadow-sm border border-black/5 p-6 mb-4">

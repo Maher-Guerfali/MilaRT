@@ -89,26 +89,30 @@ export default function ItemView({
       </button>
 
       {selected && (
-        <>
-          <button
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-ink text-paper shadow flex items-center justify-center"
-            title="Delete"
-          ><TrashIcon size={14} /></button>
-          <div
-            className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
-            onPointerDown={(e) => startDrag(e, 'resize')}
-            onPointerMove={onDrag}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-            style={{
-              background: 'linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.25) 50%)',
-              borderBottomRightRadius: 12,
-            }}
-          />
-        </>
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-ink text-paper shadow flex items-center justify-center"
+          title="Delete"
+        ><TrashIcon size={14} /></button>
       )}
+
+      {/* Resize handle is visible whenever the item is hovered or selected,
+          so it works without first clicking-to-select (a common confusion). */}
+      <div
+        className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-white shadow ring-1 ring-black/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
+          selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}
+        onPointerDown={(e) => startDrag(e, 'resize')}
+        onPointerMove={onDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        title="Resize"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M9 21 21 9" /><path d="M14 21 21 14" /><path d="M19 21 21 19" />
+        </svg>
+      </div>
     </div>
   );
 }
