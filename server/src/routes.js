@@ -8,26 +8,25 @@ import { Room, Board } from './models.js';
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
 const makeRoomCode = customAlphabet(ROOM_CODE_ALPHABET, 6);
 
-const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || 'server/uploads');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+export function makeRoutes({ uploadDir }) {
+  fs.mkdirSync(uploadDir, { recursive: true });
 
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: UPLOAD_DIR,
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname || '').toLowerCase().slice(0, 8) || '.png';
-      const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-      cb(null, name);
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: uploadDir,
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase().slice(0, 8) || '.png';
+        const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+        cb(null, name);
+      },
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    fileFilter: (_req, file, cb) => {
+      if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
+      cb(null, true);
     },
-  }),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (_req, file, cb) => {
-    if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
-    cb(null, true);
-  },
-});
+  });
 
-export function makeRoutes() {
   const r = Router();
 
   // Create a new room + its root board.
@@ -122,6 +121,11 @@ export function makeRoutes() {
   // Upload an image; returns a public URL the client can drop into an item.
   r.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'no_file' });
+    // Sanity check — confirm the file actually landed where we'll serve it from.
+    const written = path.join(uploadDir, req.file.filename);
+    const exists = fs.existsSync(written);
+    console.log('[upload]', written, exists ? 'OK' : 'MISSING');
+    if (!exists) return res.status(500).json({ error: 'upload_lost', uploadDir, written });
     res.json({ url: `/uploads/${req.file.filename}` });
   });
 
