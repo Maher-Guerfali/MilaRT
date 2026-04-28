@@ -88,6 +88,16 @@ export function makeRoutes({ uploadDir }) {
     });
   });
 
+  // Delete a room and every board (and its items + strokes) that belongs to it.
+  // Anyone with the room code can do this — same trust model as editing.
+  r.delete('/rooms/:code', async (req, res) => {
+    const room = await findRoomByAnyCase(req.params.code);
+    if (!room) return res.status(404).json({ error: 'not_found' });
+    await Board.deleteMany({ roomId: room._id });
+    await Room.deleteOne({ _id: room._id });
+    res.json({ deleted: true, code: room.code });
+  });
+
   // Create a nested board inside an existing one.
   r.post('/boards', async (req, res) => {
     const { roomCode, parentBoardId, name } = req.body || {};

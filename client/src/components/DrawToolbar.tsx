@@ -13,11 +13,10 @@ interface Props {
   onColor: (c: string) => void;
   onWidth: (w: number) => void;
   onPenOnly: (v: boolean) => void;
-  onClear: () => void;
 }
 
 export default function DrawToolbar({
-  mode, color, width, penOnly, onMode, onColor, onWidth, onPenOnly, onClear,
+  mode, color, width, penOnly, onMode, onColor, onWidth, onPenOnly,
 }: Props) {
   const palette = mode === 'pen' || mode === 'erase';
 
@@ -59,14 +58,6 @@ export default function DrawToolbar({
             <StylusIcon size={14} />
             <span>Pencil only</span>
           </button>
-
-          {mode === 'pen' && (
-            <button
-              onClick={onClear}
-              className="text-xs px-2 py-1 rounded-md border border-ink/20 hover:bg-ink/5"
-              title="Clear all strokes on this board"
-            >Clear</button>
-          )}
         </div>
       )}
 

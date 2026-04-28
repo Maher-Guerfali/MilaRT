@@ -156,7 +156,6 @@ export default function BoardPage() {
           onColor={setDrawColor}
           onWidth={setDrawWidth}
           onPenOnly={togglePenOnly}
-          onClear={() => setStrokes([])}
         />
         <Canvas
           items={items}

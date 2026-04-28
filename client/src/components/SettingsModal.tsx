@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { BaseItem, Stroke } from '../types';
-import { CloseIcon, DownloadIcon, UploadIcon } from './icons';
+import { api } from '../api';
+import { CloseIcon, DownloadIcon, UploadIcon, LogoutIcon, TrashIcon } from './icons';
 
 interface ExportPayload {
   version: 1;
@@ -24,8 +26,10 @@ interface Props {
 export default function SettingsModal({
   open, roomCode, boardName, items, strokes, onClose, onImport,
 }: Props) {
+  const nav = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
 
   if (!open) return null;
 
@@ -142,6 +146,42 @@ export default function SettingsModal({
                 their original URLs, which only resolve on the server they
                 were uploaded to.
               </p>
+            </div>
+          </section>
+
+          <section>
+            <div className="text-xs uppercase tracking-wider text-ink/50 mb-2">Danger zone</div>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => { onClose(); nav('/'); }}
+                disabled={busy}
+                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-ink/20 hover:bg-ink hover:text-paper disabled:opacity-50"
+              >
+                <LogoutIcon size={16} />
+                <span>Leave room (back to home)</span>
+              </button>
+              <button
+                onClick={async () => {
+                  const ok = window.confirm(
+                    `Delete room "${roomCode}"?\n\nThis permanently removes the room and every board, item, and stroke in it. This cannot be undone.`
+                  );
+                  if (!ok) return;
+                  setBusy(true);
+                  try {
+                    await api.deleteRoom(roomCode);
+                    onClose();
+                    nav('/');
+                  } catch (e) {
+                    setMsg({ kind: 'err', text: 'Could not delete: ' + (e as Error).message });
+                    setBusy(false);
+                  }
+                }}
+                disabled={busy}
+                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-red-300 text-red-700 hover:bg-red-600 hover:text-white hover:border-red-600 disabled:opacity-50"
+              >
+                <TrashIcon size={16} />
+                <span>Delete this room (everyone loses it)</span>
+              </button>
             </div>
           </section>
 

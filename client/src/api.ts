@@ -18,6 +18,9 @@ export const api = {
 
   getRoom: (code: string) => req<Room>(`/api/rooms/${encodeURIComponent(code)}`),
 
+  deleteRoom: (code: string) =>
+    req<{ deleted: true; code: string }>(`/api/rooms/${encodeURIComponent(code)}`, { method: 'DELETE' }),
+
   getBoard: (boardId: string) => req<Board>(`/api/boards/${boardId}`),
 
   saveBoard: (boardId: string, items: BaseItem[], strokes: Stroke[], name?: string) =>

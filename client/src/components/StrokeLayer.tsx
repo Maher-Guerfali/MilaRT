@@ -16,7 +16,16 @@ interface Props {
 export default function StrokeLayer({
   view, strokes, drawMode, color, width, eraser, penOnly, onChange, toWorld,
 }: Props) {
-  const [active, setActive] = useState<Stroke | null>(null);
+  // The active stroke lives in a ref (always synchronously up to date) and
+  // is mirrored into state only to trigger a render. The previous setState-
+  // only approach lost the first move of fast strokes because pointermove
+  // could fire before React committed the pointerdown's setState, and the
+  // functional updater would then early-return on s===null.
+  const activeRef = useRef<Stroke | null>(null);
+  const [, force] = useState(0);
+  const rerender = () => force((n) => n + 1);
+
+  const drawingRef = useRef(false);
 
   function strokeToPath(s: Stroke) {
     if (s.points.length < 3) return '';
@@ -27,7 +36,11 @@ export default function StrokeLayer({
     return d;
   }
 
-  // Erase by removing any stroke that has a point near the cursor (in world coords).
+  // Single-point strokes (taps, periods, accents) need to render as a dot.
+  function strokeIsDot(s: Stroke) {
+    return s.points.length >= 3 && s.points.length < 6;
+  }
+
   function eraseAt(wx: number, wy: number) {
     const r = 14 / view.scale;
     const r2 = r * r;
@@ -42,12 +55,8 @@ export default function StrokeLayer({
     if (kept.length !== strokes.length) onChange(kept);
   }
 
-  const drawingRef = useRef(false);
-
   function onDown(e: React.PointerEvent) {
     if (!drawMode) return;
-    // In Pencil-only mode: ignore finger/mouse so palm rests can't draw.
-    // The user can switch to Drag mode for finger panning.
     if (penOnly && e.pointerType !== 'pen') return;
     e.stopPropagation();
     drawingRef.current = true;
@@ -56,10 +65,12 @@ export default function StrokeLayer({
     if (eraser) {
       eraseAt(x, y);
     } else {
-      setActive({ color, width, points: [x, y, p] });
+      activeRef.current = { color, width, points: [x, y, p] };
+      rerender();
     }
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* ignore */ }
   }
+
   function onMove(e: React.PointerEvent) {
     if (!drawMode || !drawingRef.current) return;
     const { x, y } = toWorld(e.clientX, e.clientY);
@@ -67,25 +78,31 @@ export default function StrokeLayer({
       eraseAt(x, y);
       return;
     }
-    setActive((s) => {
-      if (!s) return s;
-      const last = s.points;
-      // Skip duplicate points (mostly stationary fingers).
-      if (last.length >= 3 && last[last.length - 3] === x && last[last.length - 2] === y) return s;
-      const p = e.pressure > 0 ? e.pressure : 0.5;
-      return { ...s, points: [...last, x, y, p] };
-    });
+    const a = activeRef.current;
+    if (!a) return;
+    // Skip exact-duplicate points to keep paths compact.
+    const n = a.points.length;
+    if (n >= 3 && a.points[n - 3] === x && a.points[n - 2] === y) return;
+    const p = e.pressure > 0 ? e.pressure : 0.5;
+    a.points.push(x, y, p);
+    rerender();
   }
+
   function onUp(e: React.PointerEvent) {
     drawingRef.current = false;
-    if (active && active.points.length >= 6) {
-      onChange([...strokes, active]);
+    const a = activeRef.current;
+    // Save any stroke that has at least one real point (3 numbers).
+    // Previously we discarded < 6 points which threw away quick taps and
+    // tiny letters — that was the "50% of the time it doesn't work" bug.
+    if (a && a.points.length >= 3) {
+      onChange([...strokes, a]);
     }
-    setActive(null);
-    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch {
-      // ignore
-    }
+    activeRef.current = null;
+    rerender();
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
+
+  const active = activeRef.current;
 
   return (
     <svg
@@ -98,25 +115,46 @@ export default function StrokeLayer({
     >
       <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
         {strokes.map((s, i) => (
-          <path
-            key={i}
-            d={strokeToPath(s)}
-            stroke={s.color}
-            strokeWidth={s.width}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            fill="none"
-          />
+          strokeIsDot(s) ? (
+            <circle
+              key={i}
+              cx={s.points[0]}
+              cy={s.points[1]}
+              r={Math.max(1, s.width * (0.5 + (s.points[2] || 0.5)))}
+              fill={s.color}
+            />
+          ) : (
+            <path
+              key={i}
+              d={strokeToPath(s)}
+              stroke={s.color}
+              strokeWidth={s.width}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+              style={{ pointerEvents: 'none' }}
+            />
+          )
         ))}
-        {active && (
-          <path
-            d={strokeToPath(active)}
-            stroke={active.color}
-            strokeWidth={active.width}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            fill="none"
-          />
+        {active && active.points.length >= 3 && (
+          active.points.length < 6 ? (
+            <circle
+              cx={active.points[0]}
+              cy={active.points[1]}
+              r={Math.max(1, active.width * (0.5 + (active.points[2] || 0.5)))}
+              fill={active.color}
+            />
+          ) : (
+            <path
+              d={strokeToPath(active)}
+              stroke={active.color}
+              strokeWidth={active.width}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+              style={{ pointerEvents: 'none' }}
+            />
+          )
         )}
       </g>
     </svg>
