@@ -339,16 +339,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         </svg>
       )}
 
-      {/* Multi-select count */}
-      {selection.size > 0 && !lassoActive && (
-        <div
-          className="absolute top-3.5 left-1/2 -translate-x-1/2 z-[35] text-white text-[12px] font-bold px-3.5 py-1.5 rounded-full animate-fadeUp"
-          style={{ background: '#D97435', boxShadow: '0 3px 14px rgba(217,116,53,0.50)' }}
-        >
-          {selection.size} item{selection.size > 1 ? 's' : ''} selected — switch to Move to drag
-        </div>
-      )}
-
       {/* Bottom-right zoom dock — design styling */}
       <div
         className="absolute bottom-[22px] right-4 z-20 rounded-[13px] border border-ink/10 flex items-center p-1 gap-px"
