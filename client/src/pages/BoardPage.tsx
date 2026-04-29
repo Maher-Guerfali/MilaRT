@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
@@ -7,6 +7,13 @@ import Sidebar from '../components/Sidebar';
 import Breadcrumbs from '../components/Breadcrumbs';
 import DrawToolbar, { type Mode } from '../components/DrawToolbar';
 import SettingsModal from '../components/SettingsModal';
+import { useHistory } from '../hooks/useHistory';
+
+interface Snap {
+  items: BaseItem[];
+  strokes: Stroke[];
+  name: string;
+}
 
 export default function BoardPage() {
   const { code, boardId } = useParams();
@@ -23,6 +30,7 @@ export default function BoardPage() {
   const [mode, setMode] = useState<Mode>('drag');
   const [drawColor, setDrawColor] = useState('#1b1b1b');
   const [drawWidth, setDrawWidth] = useState(2);
+  const [drawTool, setDrawTool] = useState<'pen' | 'fountain' | 'pencil' | 'marker' | 'brush'>('pen');
   // Persist pen-only across sessions on the same device — most users will
   // either always be on iPad with a pencil or never.
   const [penOnly, setPenOnly] = useState<boolean>(() => {
@@ -36,6 +44,37 @@ export default function BoardPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const canvasRef = useRef<CanvasHandle>(null);
 
+  // Combined snapshot for undo history. Recreated only when one of its
+  // members actually changes, so the history hook doesn't see a new
+  // identity on every unrelated render.
+  const snap = useMemo<Snap>(() => ({ items, strokes, name }), [items, strokes, name]);
+  const history = useHistory<Snap>(snap, (s) => {
+    setItems(s.items);
+    setStrokes(s.strokes);
+    setName(s.name);
+  });
+
+  // Cmd/Ctrl + Z to undo, +Shift to redo. Skipped while typing in inputs.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) history.redo(); else history.undo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        history.redo();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [history]);
+
+  // history.reset accessed via ref so load()'s identity is stable.
+  const historyResetRef = useRef(history.reset);
+  historyResetRef.current = history.reset;
+
   const load = useCallback(async () => {
     if (!code) return;
     setLoading(true); setErr(null);
@@ -47,6 +86,8 @@ export default function BoardPage() {
         return;
       }
       const b = await api.getBoard(targetId);
+      // Wipe undo history so the user can't undo across a load boundary.
+      historyResetRef.current();
       setBoard(b);
       setItems(b.items);
       setStrokes(b.strokes || []);
@@ -103,6 +144,19 @@ export default function BoardPage() {
   }
   function deleteItem(id: string) {
     setItems((xs) => xs.filter((it) => it.id !== id));
+  }
+  function deleteItems(ids: string[]) {
+    const setIds = new Set(ids);
+    setItems((xs) => xs.filter((it) => !setIds.has(it.id)));
+  }
+  // Translate every item whose id is in `ids` by (dx, dy).
+  function moveItems(ids: string[], delta: { dx: number; dy: number }) {
+    const setIds = new Set(ids);
+    setItems((xs) =>
+      xs.map((it) =>
+        setIds.has(it.id) ? { ...it, x: it.x + delta.dx, y: it.y + delta.dy } : it
+      )
+    );
   }
 
   async function enterBoard(itemId: string) {
@@ -162,10 +216,12 @@ export default function BoardPage() {
           mode={mode}
           color={drawColor}
           width={drawWidth}
+          tool={drawTool}
           penOnly={penOnly}
           onMode={setMode}
           onColor={setDrawColor}
           onWidth={setDrawWidth}
+          onTool={setDrawTool}
           onPenOnly={togglePenOnly}
         />
         <Canvas
@@ -175,9 +231,12 @@ export default function BoardPage() {
           mode={mode}
           drawColor={drawColor}
           drawWidth={drawWidth}
+          drawTool={drawTool}
           penOnly={penOnly}
           onUpdate={updateItem}
+          onUpdateMany={moveItems}
           onDelete={deleteItem}
+          onDeleteMany={deleteItems}
           onAdd={addItem}
           onSetStrokes={setStrokes}
           onEnterBoard={enterBoard}

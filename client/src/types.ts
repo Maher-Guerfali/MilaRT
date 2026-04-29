@@ -21,9 +21,13 @@ export interface BoardRefData {
   imageUrl?: string;
 }
 
+export type StrokeTool = 'pen' | 'fountain' | 'pencil' | 'marker' | 'brush';
+
 export interface Stroke {
   color: string;
   width: number;
+  // Optional — older strokes default to 'pen'.
+  tool?: StrokeTool;
   // [x, y, pressure] triplets stored in board (world) coordinates.
   points: number[];
 }

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { Stroke } from '../types';
+import type { Stroke, StrokeTool } from '../types';
 
 interface Props {
   view: { x: number; y: number; scale: number };
@@ -7,24 +7,40 @@ interface Props {
   drawMode: boolean;
   color: string;
   width: number;
+  tool: string; // narrowed to StrokeTool when valid
   eraser: boolean;
   penOnly: boolean;
   onChange: (next: Stroke[]) => void;
   toWorld: (clientX: number, clientY: number) => { x: number; y: number };
 }
 
+// Per-tool render style. Pressure (p) varies along the stroke; for static
+// rendering we use the average so each path renders with one width.
+function styleForStroke(s: Stroke): { strokeWidth: number; opacity: number; dasharray?: string } {
+  const tool = (s.tool || 'pen') as StrokeTool;
+  const avgP = avgPressure(s);
+  const w = s.width;
+  switch (tool) {
+    case 'pen':      return { strokeWidth: w, opacity: 1 };
+    case 'fountain': return { strokeWidth: w * (0.5 + avgP), opacity: 1 };
+    case 'pencil':   return { strokeWidth: w * 0.9, opacity: 0.6 };
+    case 'marker':   return { strokeWidth: w * 1.2, opacity: 0.55 };
+    case 'brush':    return { strokeWidth: w * (0.6 + avgP), opacity: 0.85 };
+  }
+}
+
+function avgPressure(s: Stroke) {
+  let sum = 0; let n = 0;
+  for (let i = 2; i < s.points.length; i += 3) { sum += s.points[i]; n++; }
+  return n ? sum / n : 0.5;
+}
+
 export default function StrokeLayer({
-  view, strokes, drawMode, color, width, eraser, penOnly, onChange, toWorld,
+  view, strokes, drawMode, color, width, tool, eraser, penOnly, onChange, toWorld,
 }: Props) {
-  // The active stroke lives in a ref (always synchronously up to date) and
-  // is mirrored into state only to trigger a render. The previous setState-
-  // only approach lost the first move of fast strokes because pointermove
-  // could fire before React committed the pointerdown's setState, and the
-  // functional updater would then early-return on s===null.
   const activeRef = useRef<Stroke | null>(null);
   const [, force] = useState(0);
   const rerender = () => force((n) => n + 1);
-
   const drawingRef = useRef(false);
 
   function strokeToPath(s: Stroke) {
@@ -34,11 +50,6 @@ export default function StrokeLayer({
       d += (i === 0 ? 'M' : 'L') + s.points[i].toFixed(1) + ' ' + s.points[i + 1].toFixed(1);
     }
     return d;
-  }
-
-  // Single-point strokes (taps, periods, accents) need to render as a dot.
-  function strokeIsDot(s: Stroke) {
-    return s.points.length >= 3 && s.points.length < 6;
   }
 
   function eraseAt(wx: number, wy: number) {
@@ -65,12 +76,11 @@ export default function StrokeLayer({
     if (eraser) {
       eraseAt(x, y);
     } else {
-      activeRef.current = { color, width, points: [x, y, p] };
+      activeRef.current = { color, width, tool: tool as StrokeTool, points: [x, y, p] };
       rerender();
     }
     try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* ignore */ }
   }
-
   function onMove(e: React.PointerEvent) {
     if (!drawMode || !drawingRef.current) return;
     const { x, y } = toWorld(e.clientX, e.clientY);
@@ -80,26 +90,50 @@ export default function StrokeLayer({
     }
     const a = activeRef.current;
     if (!a) return;
-    // Skip exact-duplicate points to keep paths compact.
     const n = a.points.length;
     if (n >= 3 && a.points[n - 3] === x && a.points[n - 2] === y) return;
     const p = e.pressure > 0 ? e.pressure : 0.5;
     a.points.push(x, y, p);
     rerender();
   }
-
   function onUp(e: React.PointerEvent) {
     drawingRef.current = false;
     const a = activeRef.current;
-    // Save any stroke that has at least one real point (3 numbers).
-    // Previously we discarded < 6 points which threw away quick taps and
-    // tiny letters — that was the "50% of the time it doesn't work" bug.
-    if (a && a.points.length >= 3) {
-      onChange([...strokes, a]);
-    }
+    if (a && a.points.length >= 3) onChange([...strokes, a]);
     activeRef.current = null;
     rerender();
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+
+  function renderStroke(s: Stroke, key: string | number) {
+    const style = styleForStroke(s);
+    if (s.points.length < 6) {
+      // dot
+      return (
+        <circle
+          key={key}
+          cx={s.points[0]}
+          cy={s.points[1]}
+          r={Math.max(1, style.strokeWidth * 0.6)}
+          fill={s.color}
+          opacity={style.opacity}
+        />
+      );
+    }
+    return (
+      <path
+        key={key}
+        d={strokeToPath(s)}
+        stroke={s.color}
+        strokeWidth={style.strokeWidth}
+        strokeLinecap={s.tool === 'marker' ? 'butt' : 'round'}
+        strokeLinejoin="round"
+        fill="none"
+        opacity={style.opacity}
+        strokeDasharray={style.dasharray}
+        style={{ pointerEvents: 'none' }}
+      />
+    );
   }
 
   const active = activeRef.current;
@@ -114,48 +148,8 @@ export default function StrokeLayer({
       onPointerCancel={onUp}
     >
       <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
-        {strokes.map((s, i) => (
-          strokeIsDot(s) ? (
-            <circle
-              key={i}
-              cx={s.points[0]}
-              cy={s.points[1]}
-              r={Math.max(1, s.width * (0.5 + (s.points[2] || 0.5)))}
-              fill={s.color}
-            />
-          ) : (
-            <path
-              key={i}
-              d={strokeToPath(s)}
-              stroke={s.color}
-              strokeWidth={s.width}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
-              style={{ pointerEvents: 'none' }}
-            />
-          )
-        ))}
-        {active && active.points.length >= 3 && (
-          active.points.length < 6 ? (
-            <circle
-              cx={active.points[0]}
-              cy={active.points[1]}
-              r={Math.max(1, active.width * (0.5 + (active.points[2] || 0.5)))}
-              fill={active.color}
-            />
-          ) : (
-            <path
-              d={strokeToPath(active)}
-              stroke={active.color}
-              strokeWidth={active.width}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
-              style={{ pointerEvents: 'none' }}
-            />
-          )
-        )}
+        {strokes.map((s, i) => renderStroke(s, i))}
+        {active && active.points.length >= 3 && renderStroke(active, 'active')}
       </g>
     </svg>
   );

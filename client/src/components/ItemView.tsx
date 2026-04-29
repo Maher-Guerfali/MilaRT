@@ -6,30 +6,37 @@ import { GripIcon, TrashIcon, BoardIcon, CameraIcon } from './icons';
 interface Props {
   item: BaseItem;
   selected: boolean;
+  selectionIds: string[];
   scale: number;
   interactive: boolean;
-  onSelect: () => void;
+  onSelect: (additive: boolean) => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
+  onMoveGroup: (ids: string[], dx: number, dy: number) => void;
   onDelete: () => void;
   onEnterBoard: () => void;
 }
 
 export default function ItemView({
-  item, selected, scale, interactive, onSelect, onUpdate, onDelete, onEnterBoard,
+  item, selected, selectionIds, scale, interactive, onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard,
 }: Props) {
   const dragRef = useRef<{ px: number; py: number; ix: number; iy: number; iw: number; ih: number; mode: 'move' | 'resize' } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
+  // Track the last applied delta during a group move so we send only
+  // incremental dx/dy. Resize is single-item.
+  const lastDelta = useRef<{ dx: number; dy: number } | null>(null);
+
   function startDrag(e: React.PointerEvent, mode: 'move' | 'resize') {
     if (!interactive) return;
     e.stopPropagation();
-    onSelect();
+    if (!selected || mode === 'resize') onSelect(e.shiftKey);
     dragRef.current = {
       px: e.clientX, py: e.clientY,
       ix: item.x, iy: item.y,
       iw: item.w, ih: item.h,
       mode,
     };
+    lastDelta.current = { dx: 0, dy: 0 };
     setGhost({ x: item.x, y: item.y, w: item.w, h: item.h });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
@@ -40,6 +47,17 @@ export default function ItemView({
     const dy = (e.clientY - d.py) / scale;
     if (d.mode === 'move') {
       setGhost({ x: d.ix + dx, y: d.iy + dy, w: d.iw, h: d.ih });
+      // If a group is selected, move every selected item by the
+      // incremental delta since the previous move event.
+      if (selectionIds.length > 1 && selectionIds.includes(item.id) && lastDelta.current) {
+        const idx = dx - lastDelta.current.dx;
+        const idy = dy - lastDelta.current.dy;
+        // Only push when there's actual movement, to avoid no-op renders.
+        if (idx !== 0 || idy !== 0) {
+          onMoveGroup(selectionIds.filter((id) => id !== item.id), idx, idy);
+          lastDelta.current = { dx, dy };
+        }
+      }
     } else {
       setGhost({ x: d.ix, y: d.iy, w: Math.max(60, d.iw + dx), h: Math.max(40, d.ih + dy) });
     }
@@ -50,6 +68,7 @@ export default function ItemView({
     if (d.mode === 'move') onUpdate({ x: ghost.x, y: ghost.y });
     else onUpdate({ w: ghost.w, h: ghost.h });
     dragRef.current = null;
+    lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
@@ -76,7 +95,7 @@ export default function ItemView({
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
       }}
-      onPointerDown={(e) => { e.stopPropagation(); onSelect(); }}
+      onPointerDown={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }}
     >
       {item.type === 'sticky' && <Sticky item={item} onUpdate={onUpdate} />}
       {item.type === 'image' && <ImageBox item={item} />}

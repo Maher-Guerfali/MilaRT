@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { customAlphabet } from 'nanoid';
 import { Room, Board } from './models.js';
+import { uploadImage as storageUpload, STORAGE_MODE } from './storage.js';
 
 // Fallback random code if the user creates a room without picking a name.
 const RANDOM_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // no 0/o/1/l/i
@@ -30,17 +31,15 @@ async function findRoomByAnyCase(raw) {
 }
 
 export function makeRoutes({ uploadDir }) {
+  // Always ensure a local upload dir exists — even in Supabase mode the
+  // /uploads/* static route stays mounted so old image URLs from before
+  // the migration still resolve.
   fs.mkdirSync(uploadDir, { recursive: true });
 
+  // Multer keeps the file in memory; the storage layer decides whether to
+  // ship it to Supabase or write it to disk.
   const upload = multer({
-    storage: multer.diskStorage({
-      destination: uploadDir,
-      filename: (_req, file, cb) => {
-        const ext = path.extname(file.originalname || '').toLowerCase().slice(0, 8) || '.png';
-        const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-        cb(null, name);
-      },
-    }),
+    storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
     fileFilter: (_req, file, cb) => {
       if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
@@ -151,14 +150,24 @@ export function makeRoutes({ uploadDir }) {
   });
 
   // Upload an image; returns a public URL the client can drop into an item.
-  r.post('/upload', upload.single('file'), (req, res) => {
+  // Stores in Supabase Storage when configured; otherwise on local disk.
+  r.post('/upload', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'no_file' });
-    // Sanity check — confirm the file actually landed where we'll serve it from.
-    const written = path.join(uploadDir, req.file.filename);
-    const exists = fs.existsSync(written);
-    console.log('[upload]', written, exists ? 'OK' : 'MISSING');
-    if (!exists) return res.status(500).json({ error: 'upload_lost', uploadDir, written });
-    res.json({ url: `/uploads/${req.file.filename}` });
+    const ext = path.extname(req.file.originalname || '').toLowerCase().slice(0, 8) || '.png';
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    try {
+      const { url } = await storageUpload({
+        buffer: req.file.buffer,
+        filename,
+        mimetype: req.file.mimetype || 'image/png',
+        localDir: uploadDir,
+      });
+      console.log(`[upload] mode=${STORAGE_MODE} -> ${url}`);
+      res.json({ url });
+    } catch (err) {
+      console.error('[upload] failed:', err);
+      res.status(500).json({ error: 'upload_failed', detail: err.message });
+    }
   });
 
   return r;

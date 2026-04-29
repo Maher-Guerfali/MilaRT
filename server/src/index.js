@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { connectDB } from './db.js';
 import { makeRoutes } from './routes.js';
+import { STORAGE_MODE } from './storage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4000);
@@ -41,6 +42,11 @@ app.get('/api/_debug', (_req, res) => {
     nodeEnv: process.env.NODE_ENV,
     cwd: process.cwd(),
     dirname: __dirname,
+    storage: {
+      mode: STORAGE_MODE,
+      bucket: process.env.SUPABASE_BUCKET || 'images',
+      supabaseConfigured: !!(process.env.SUPABASE_URL && (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_KEY)),
+    },
     uploadDir: { path: UPLOAD_DIR, exists: fs.existsSync(UPLOAD_DIR), contents: uploadContents },
     clientDist: { path: CLIENT_DIST, exists: fs.existsSync(CLIENT_DIST) },
     clientIndex: { path: CLIENT_INDEX, exists: fs.existsSync(CLIENT_INDEX) },
