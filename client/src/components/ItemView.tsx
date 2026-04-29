@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData } from '../types';
 import { api } from '../api';
-import { GripIcon, TrashIcon, BoardIcon, CameraIcon } from './icons';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon, EnterChevron, LinkIcon, ImageIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -21,9 +21,6 @@ export default function ItemView({
 }: Props) {
   const dragRef = useRef<{ px: number; py: number; ix: number; iy: number; iw: number; ih: number; mode: 'move' | 'resize' } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-
-  // Track the last applied delta during a group move so we send only
-  // incremental dx/dy. Resize is single-item.
   const lastDelta = useRef<{ dx: number; dy: number } | null>(null);
 
   function startDrag(e: React.PointerEvent, mode: 'move' | 'resize') {
@@ -47,12 +44,9 @@ export default function ItemView({
     const dy = (e.clientY - d.py) / scale;
     if (d.mode === 'move') {
       setGhost({ x: d.ix + dx, y: d.iy + dy, w: d.iw, h: d.ih });
-      // If a group is selected, move every selected item by the
-      // incremental delta since the previous move event.
       if (selectionIds.length > 1 && selectionIds.includes(item.id) && lastDelta.current) {
         const idx = dx - lastDelta.current.dx;
         const idy = dy - lastDelta.current.dy;
-        // Only push when there's actual movement, to avoid no-op renders.
         if (idx !== 0 || idy !== 0) {
           onMoveGroup(selectionIds.filter((id) => id !== item.id), idx, idy);
           lastDelta.current = { dx, dy };
@@ -75,39 +69,25 @@ export default function ItemView({
 
   const pos = ghost ?? item;
 
-  // Link items render as bare text (no card). Other items keep the white
-  // card + ring; Board ref renders its own visual.
-  const isText = item.type === 'link';
-  const isBoard = item.type === 'board';
-  const ringCls = selected ? 'ring-2 ring-ink/60' : 'ring-1 ring-black/5';
-  const bodyCls =
-    isText
-      ? '' // transparent body
-      : isBoard
-        ? '' // board ref has its own styling
-        : `rounded-xl shadow-sm bg-white ${ringCls}`;
-
   return (
     <div
       data-item
-      className={`group absolute ${bodyCls}`}
+      className="group absolute"
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
       }}
       onPointerDown={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }}
     >
-      {item.type === 'sticky' && <Sticky item={item} onUpdate={onUpdate} />}
-      {item.type === 'image' && <ImageBox item={item} />}
-      {item.type === 'link' && <TextBox item={item} selected={selected} onUpdate={onUpdate} />}
-      {item.type === 'board' && (
-        <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnter={onEnterBoard} />
-      )}
+      {item.type === 'sticky' && <Sticky item={item} selected={selected} onUpdate={onUpdate} />}
+      {item.type === 'image'  && <ImageBox item={item} selected={selected} />}
+      {item.type === 'link'   && <TextOrLink item={item} selected={selected} onUpdate={onUpdate} />}
+      {item.type === 'board'  && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnter={onEnterBoard} />}
 
-      {/* Drag grip — only this initiates a move so the body stays interactive. */}
+      {/* Drag grip — only visible on hover/select */}
       <button
         title="Drag"
-        className={`absolute -top-2 -left-2 w-7 h-7 rounded-full bg-white shadow ring-1 ring-black/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        className={`absolute -top-2 -left-2 w-7 h-7 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
         onPointerDown={(e) => startDrag(e, 'move')}
         onPointerMove={onDrag}
         onPointerUp={endDrag}
@@ -120,13 +100,13 @@ export default function ItemView({
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-ink text-paper shadow flex items-center justify-center"
+          className="absolute -top-2.5 -right-2.5 w-[26px] h-[26px] rounded-full bg-ink text-paper shadow flex items-center justify-center"
           title="Delete"
         ><TrashIcon size={14} /></button>
       )}
 
       <div
-        className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-white shadow ring-1 ring-black/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
+        className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
           selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         }`}
         onPointerDown={(e) => startDrag(e, 'resize')}
@@ -143,50 +123,72 @@ export default function ItemView({
   );
 }
 
-function Sticky({ item, onUpdate }: { item: BaseItem; onUpdate: (p: Partial<BaseItem>) => void }) {
+function Sticky({
+  item, selected, onUpdate,
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void }) {
   const d = item.data as Partial<StickyData>;
   return (
     <textarea
-      className="w-full h-full resize-none rounded-xl p-3 text-sm leading-snug bg-transparent focus:outline-none"
+      className="w-full h-full resize-none border-0 outline-none p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap transition-shadow"
       placeholder="Type something…"
       value={d.text ?? ''}
       onChange={(e) => onUpdate({ data: { ...d, text: e.target.value } })}
       onPointerDown={(e) => e.stopPropagation()}
-      style={{ background: d.color || '#fff7ae', borderRadius: 12 }}
+      style={{
+        background: d.color || '#FFF3C4',
+        borderRadius: 16,
+        boxShadow: selected
+          ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)'
+          : '0 2px 10px rgba(26,21,16,0.09)',
+      }}
     />
   );
 }
 
-function ImageBox({ item }: { item: BaseItem }) {
+function ImageBox({ item, selected }: { item: BaseItem; selected: boolean }) {
   const d = item.data as Partial<ImageData>;
-  if (!d.url) return <div className="w-full h-full flex items-center justify-center text-ink/40 text-sm">No image</div>;
+  if (!d.url) {
+    return (
+      <div
+        className="w-full h-full rounded-2xl flex flex-col items-center justify-center gap-2 text-ink/50 transition-shadow"
+        style={{
+          background: 'linear-gradient(135deg, rgba(26,21,16,0.04), rgba(232,184,48,0.10))',
+          border: '2px dashed rgba(26,21,16,0.14)',
+          boxShadow: selected ? '0 0 0 2.5px #D97435' : 'none',
+        }}
+      >
+        <ImageIcon size={26} />
+        <span className="text-[11px]">Drop image / paste URL</span>
+      </div>
+    );
+  }
   return (
     <img
       src={d.url}
       alt=""
       draggable={false}
-      className="w-full h-full object-cover rounded-xl pointer-events-none"
+      className="w-full h-full object-cover rounded-2xl pointer-events-none"
+      style={{ boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)' }}
     />
   );
 }
 
-// Bare text item: no background, no card. Just typed text on the canvas.
-// URLs in the text are clickable when not focused.
-function TextBox({
+// "link"-typed items render as either bare text (when there's no URL)
+// or a subtle blue-underlined link card.
+function TextOrLink({
   item, selected, onUpdate,
 }: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void }) {
   const d = item.data as Partial<LinkData>;
-  // Backwards compat — earlier versions stored {url, title}; merge them into a single string on first edit.
-  const initial = (d.title || d.url || '').toString();
+  const txt = (d.title || d.url || '').toString();
+  const isUrl = /^https?:\/\/\S+$/i.test(txt.trim());
   const [editing, setEditing] = useState(false);
-  const isUrl = /^https?:\/\/\S+$/i.test(initial.trim());
 
   if (editing) {
     return (
       <textarea
         autoFocus
-        className={`w-full h-full resize-none p-1 text-sm leading-snug bg-transparent focus:outline-none rounded ${selected ? 'ring-1 ring-ink/30' : ''}`}
-        value={initial}
+        className="w-full h-full resize-none p-1.5 text-[14px] leading-snug bg-paper rounded-lg outline outline-2 outline-amber"
+        value={txt}
         placeholder="Type text or paste a link…"
         onChange={(e) => onUpdate({ data: { url: '', title: e.target.value } })}
         onBlur={() => setEditing(false)}
@@ -195,32 +197,52 @@ function TextBox({
     );
   }
 
+  // Compact URL card
+  if (isUrl) {
+    return (
+      <div
+        className="w-full h-full flex items-center gap-2 px-3 transition-all rounded-lg"
+        style={{
+          background: selected ? 'rgba(217,116,53,0.08)' : 'rgba(26,21,16,0.04)',
+          border: `1px solid ${selected ? '#D97435' : 'rgba(26,21,16,0.10)'}`,
+        }}
+        onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+      >
+        <LinkIcon size={13} />
+        <a
+          href={txt.trim()}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[12px] text-blue-600 underline overflow-hidden text-ellipsis whitespace-nowrap"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >{txt}</a>
+      </div>
+    );
+  }
+
+  // Bare text
   return (
     <div
-      className={`w-full h-full p-1 text-sm leading-snug whitespace-pre-wrap break-words ${
-        isUrl ? 'text-blue-700 underline' : 'text-ink'
-      }`}
-      onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
-      onClick={(e) => {
-        if (isUrl && (e.metaKey || e.ctrlKey)) {
-          e.stopPropagation();
-          window.open(initial.trim(), '_blank', 'noopener,noreferrer');
-        }
+      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5 transition-shadow"
+      style={{
+        fontSize: 16, fontWeight: 700, lineHeight: 1.45, letterSpacing: '-0.2px',
+        boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
       }}
-      title={isUrl ? 'Cmd/Ctrl-click to open. Double-click to edit.' : 'Double-click to edit.'}
+      onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
     >
-      {initial || <span className="text-ink/40 italic">empty text…</span>}
+      {txt || <span className="text-ink/50 italic font-medium">empty text…</span>}
     </div>
   );
 }
 
-// Board ref: small rounded square + label below. Click the square to open.
-// When selected, hover-reveal a camera button to upload a custom thumbnail.
 function BoardRefBox({
   item, selected, onUpdate, onEnter,
 }: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnter: () => void }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
+  const [hov, setHov] = useState(false);
+  const highlight = selected;
 
   async function uploadCover(file: File) {
     try {
@@ -231,34 +253,51 @@ function BoardRefBox({
     }
   }
 
-  // Square fills the available width with a fixed aspect ratio (1:1).
-  // Label sits below at the bottom of the item.
   return (
-    <div className="w-full h-full flex flex-col items-center">
-      <div className="relative w-full flex-1 min-h-0">
+    <div
+      className="w-full h-full flex flex-col items-center"
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+    >
+      <div
+        className="w-full flex-1 min-h-0 rounded-[18px] flex items-center justify-center relative overflow-hidden transition-all"
+        style={{
+          background: '#FDFAF5',
+          border: `2px solid ${highlight ? '#D97435' : hov ? 'rgba(26,21,16,0.22)' : 'rgba(26,21,16,0.10)'}`,
+          boxShadow: highlight
+            ? '0 0 0 3px rgba(217,116,53,0.19)'
+            : hov ? '0 4px 18px rgba(26,21,16,0.10)' : '0 2px 8px rgba(26,21,16,0.06)',
+        }}
+      >
+        {d.imageUrl ? (
+          <img src={d.imageUrl} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+        ) : (
+          <div className="text-ink/50">
+            <BoardIcon size={30} />
+          </div>
+        )}
+
+        {/* Faded "Enter →" chip — always visible at 28%, full on hover/select */}
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onEnter(); }}
-          className={`absolute inset-0 rounded-xl overflow-hidden flex items-center justify-center transition-shadow ${
-            selected ? 'ring-2 ring-ink/60' : 'ring-1 ring-black/10 hover:ring-ink/40'
-          }`}
+          className="absolute bottom-2 right-2 flex items-center gap-1 px-[9px] py-[4px] rounded-full border-0 cursor-pointer text-[10px] font-bold tracking-[0.05em] transition-opacity"
           style={{
-            background: d.imageUrl ? 'transparent' : '#ffffff',
+            background: 'rgba(217,116,53,0.13)',
+            color: '#D97435',
+            opacity: highlight || hov ? 1 : 0.28,
           }}
-          title={d.name ? `Open "${d.name}"` : 'Open board'}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(217,116,53,0.24)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(217,116,53,0.13)'; }}
         >
-          {d.imageUrl ? (
-            <img src={d.imageUrl} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />
-          ) : (
-            <BoardIcon size={Math.min(48, Math.max(20, item.w * 0.4))} />
-          )}
+          Enter <EnterChevron size={12} />
         </button>
 
-        {/* Hover-reveal upload button to set a custom thumbnail. */}
+        {/* Hover-reveal upload thumbnail button */}
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
-          className="absolute top-1 right-1 w-7 h-7 rounded-full bg-white/90 shadow ring-1 ring-black/10 flex items-center justify-center text-ink/70 hover:text-ink opacity-0 group-hover:opacity-100"
+          className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-white/90 shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/70 hover:text-ink opacity-0 group-hover:opacity-100"
           title="Set thumbnail"
         ><CameraIcon size={14} /></button>
         <input
@@ -275,7 +314,7 @@ function BoardRefBox({
       </div>
 
       <input
-        className="w-full mt-1 bg-transparent text-xs text-center font-medium focus:outline-none rounded px-1 py-0.5 hover:bg-white/50 focus:bg-white/80"
+        className="w-full mt-[7px] bg-transparent text-[12px] font-bold text-ink text-center focus:outline-none rounded-md px-1 py-0.5 hover:bg-white/50 focus:bg-white/80"
         value={d.name ?? ''}
         placeholder="Board name"
         onChange={(e) => onUpdate({ data: { ...d, name: e.target.value } })}

@@ -4,11 +4,32 @@ export default {
   theme: {
     extend: {
       colors: {
-        paper: '#f6f2ea',
-        ink: '#1b1b1b',
+        amber:  { DEFAULT: '#D97435', light: '#F08848' },
+        gold:   '#E8B830',
+        cream:  '#F3EDE0',
+        paper:  '#FDFAF5',
+        ink:    '#1A1510',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+      },
+      keyframes: {
+        fadeUp:    { from: { opacity: '0', transform: 'translateY(8px)' }, to: { opacity: '1', transform: 'none' } },
+        fadeIn:    { from: { opacity: '0' }, to: { opacity: '1' } },
+        tooltipIn: { from: { opacity: '0', transform: 'translateX(-6px)' }, to: { opacity: '1', transform: 'none' } },
+        pulse:     { '0%,100%': { opacity: '1' }, '50%': { opacity: '.4' } },
+        trayUp:    { from: { transform: 'translateY(100%)', opacity: '0' }, to: { transform: 'translateY(0)', opacity: '1' } },
+        canvasIn:  { from: { opacity: '0', transform: 'scale(.96)' }, to: { opacity: '1', transform: 'scale(1)' } },
+        marchAnt:  { to: { strokeDashoffset: '-16' } },
+      },
+      animation: {
+        fadeUp:    'fadeUp 0.3s ease both',
+        fadeIn:    'fadeIn 0.2s ease both',
+        tooltipIn: 'tooltipIn 0.15s ease both',
+        pulse:     'pulse 1s infinite',
+        trayUp:    'trayUp 0.28s cubic-bezier(0.34,1.56,0.64,1) both',
+        canvasIn:  'canvasIn 0.48s ease both',
+        marchAnt:  'marchAnt 0.5s linear infinite',
       },
     },
   },

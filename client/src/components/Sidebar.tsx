@@ -1,8 +1,12 @@
-import { useRef } from 'react';
+import { useRef, useState, type ComponentType } from 'react';
 import { nanoid } from 'nanoid';
 import type { BaseItem } from '../types';
 import { api } from '../api';
-import { StickyIcon, LinkIcon, BoardIcon, ImageIcon, SettingsIcon } from './icons';
+import {
+  StickyIcon, LinkIcon, BoardIcon, ImageIcon, TextIcon,
+  SettingsIcon,
+} from './icons';
+import Tooltip from './Tooltip';
 
 type ItemTemplate = Omit<BaseItem, 'x' | 'y'>;
 
@@ -12,29 +16,55 @@ interface Props {
   onRefresh: () => void;
   onOpenSettings: () => void;
   saving: 'idle' | 'saving' | 'saved' | 'error';
-  lastSavedAt: Date | null;
 }
 
-const STICKY_COLORS = ['#fff7ae', '#d8f2c4', '#ffd1d1', '#d5e8ff', '#eadcff'];
+const STICKY_COLORS = ['#FFF3C4', '#FFDEDE', '#D4F0DE', '#E0EDFF', '#F0E4FF'];
 
 function template(partial: Partial<BaseItem>): ItemTemplate {
   return {
     id: nanoid(10),
     type: 'sticky',
-    w: 220,
-    h: 160,
+    w: 198,
+    h: 164,
     z: 0,
     data: {},
     ...partial,
   } as ItemTemplate;
 }
 
-export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, saving, lastSavedAt }: Props) {
+interface NavBtnProps {
+  Icon: ComponentType<{ size?: number }>;
+  label: string;
+  hint: string;
+  onClick: () => void;
+}
+
+function NavBtn({ Icon, label, hint, onClick }: NavBtnProps) {
+  const [hov, setHov] = useState(false);
+  return (
+    <Tooltip label={hint} side="right">
+      <button
+        onClick={onClick}
+        onMouseEnter={() => setHov(true)}
+        onMouseLeave={() => setHov(false)}
+        className={`w-14 flex flex-col items-center justify-center gap-[3px] py-[9px] rounded-[11px] border-0 transition-colors ${
+          hov ? 'bg-ink/10 text-ink' : 'text-ink/50'
+        }`}
+      >
+        <Icon size={18} />
+        <span className="text-[9px] font-semibold uppercase tracking-[0.07em] leading-none">{label}</span>
+      </button>
+    </Tooltip>
+  );
+}
+
+export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, saving }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const tools = [
+  const tools: { label: string; hint: string; Icon: ComponentType<{ size?: number }>; action: () => void }[] = [
     {
-      label: 'Sticky note',
+      label: 'Sticky',
+      hint: 'Add a sticky note',
       Icon: StickyIcon,
       action: () => onAdd(template({
         type: 'sticky',
@@ -43,24 +73,36 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
     },
     {
       label: 'Text',
-      Icon: LinkIcon,
+      hint: 'Add free text',
+      Icon: TextIcon,
       action: () => onAdd(template({
-        type: 'link', w: 240, h: 60,
+        type: 'link', w: 178, h: 66,
         data: { url: '', title: '' },
       })),
     },
     {
-      label: 'Nested board',
+      label: 'Board',
+      hint: 'Add a nested board',
       Icon: BoardIcon,
       action: () => onAdd(template({
-        type: 'board', w: 110, h: 130,
+        type: 'board', w: 118, h: 138,
         data: { name: 'New board' },
       })),
     },
     {
-      label: 'Upload image',
+      label: 'Image',
+      hint: 'Drop or upload image',
       Icon: ImageIcon,
       action: () => fileRef.current?.click(),
+    },
+    {
+      label: 'Link',
+      hint: 'Add a URL card',
+      Icon: LinkIcon,
+      action: () => onAdd(template({
+        type: 'link', w: 218, h: 44,
+        data: { url: '', title: '' },
+      })),
     },
   ];
 
@@ -70,50 +112,39 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
     if (!file) return;
     try {
       const { url } = await api.uploadImage(file);
-      onAdd(template({ type: 'image', w: 280, h: 200, data: { url } }));
+      onAdd(template({ type: 'image', w: 218, h: 148, data: { url } }));
     } catch (err) {
       alert('Image upload failed: ' + (err as Error).message);
     }
   }
 
-  function copyCode() {
-    navigator.clipboard?.writeText(roomCode);
-  }
-
-  const savingLabel =
-    saving === 'saving' ? 'Saving…' :
-    saving === 'saved' ? `Saved${lastSavedAt ? ' ' + timeAgo(lastSavedAt) : ''}` :
-    saving === 'error' ? 'Save failed' : ' ';
+  const saveDot =
+    saving === 'saved' ? '#5cb85c' :
+    saving === 'error' ? '#e74c3c' :
+    '#D97435';
 
   return (
-    <aside className="w-56 shrink-0 border-r border-black/10 bg-white/70 backdrop-blur flex flex-col">
-      <div className="px-4 pt-4 pb-3 border-b border-black/5">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-7 h-7 rounded-md bg-ink text-paper flex items-center justify-center font-bold text-sm">M</div>
-          <span className="font-semibold tracking-tight">M-Board</span>
-        </div>
-        <div className="text-xs uppercase tracking-wider text-ink/50">Room</div>
-        <button
-          onClick={copyCode}
-          className="mt-1 font-mono text-lg tracking-widest hover:underline"
-          title="Click to copy"
-        >{roomCode}</button>
+    <aside className="w-14 shrink-0 h-full flex flex-col bg-paper border-r border-ink/10 items-center z-10">
+      {/* Logo */}
+      <div className="w-14 h-14 flex items-center justify-center border-b border-ink/10">
+        <Tooltip label={roomCode ? `Room: ${roomCode}` : null} side="right">
+          <button
+            onClick={() => navigator.clipboard?.writeText(roomCode)}
+            className="w-[30px] h-[30px] rounded-[9px] flex items-center justify-center text-white text-[15px] font-extrabold border-0"
+            style={{
+              background: 'linear-gradient(135deg, #D97435, #E8B830)',
+              boxShadow: '0 2px 10px rgba(217,116,53,0.32)',
+            }}
+            title="Copy room code"
+          >M</button>
+        </Tooltip>
       </div>
 
-      <div className="px-3 py-4 border-b border-black/5">
-        <div className="text-xs uppercase tracking-wider text-ink/50 mb-2 px-1">Add</div>
-        <div className="flex flex-col gap-1">
-          {tools.map(({ label, Icon, action }) => (
-            <button
-              key={label}
-              onClick={action}
-              className="flex items-center gap-3 text-left rounded-md px-3 py-2 text-sm hover:bg-ink hover:text-paper transition-colors"
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
+      {/* Add tools */}
+      <div className="flex flex-col gap-px py-2.5 border-b border-ink/10 w-full items-center">
+        {tools.map(({ label, hint, Icon, action }) => (
+          <NavBtn key={label} Icon={Icon} label={label} hint={hint} onClick={action} />
+        ))}
         <input
           ref={fileRef}
           type="file"
@@ -121,37 +152,36 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
           className="hidden"
           onChange={onFile}
         />
-        <p className="text-xs text-ink/50 mt-3 px-1 leading-snug">
-          Tip: paste, drop, or upload images. Drag a card by its handle.
-        </p>
       </div>
 
-      <div className="mt-auto px-4 py-4 border-t border-black/5 text-xs text-ink/60 space-y-2">
-        <div>{savingLabel}</div>
-        <div className="flex gap-2">
-          <button
-            onClick={onRefresh}
-            className="flex-1 rounded-md border border-ink/20 px-3 py-2 hover:bg-ink hover:text-paper"
-          >Refresh</button>
-          <button
-            onClick={onOpenSettings}
-            title="Settings"
-            className="rounded-md border border-ink/20 px-3 py-2 hover:bg-ink hover:text-paper flex items-center justify-center"
-          >
-            <SettingsIcon size={16} />
-          </button>
-        </div>
+      <div className="flex-1" />
+
+      {/* Save dot + utility buttons */}
+      <div className="flex flex-col gap-px py-2.5 border-t border-ink/10 w-full items-center">
+        {saving !== 'idle' && (
+          <div className="mb-1 flex justify-center">
+            <span
+              className={`w-[7px] h-[7px] rounded-full ${saving === 'saving' ? 'animate-pulse' : ''}`}
+              style={{ background: saveDot }}
+            />
+          </div>
+        )}
+        <NavBtn Icon={RefreshIconLocal} label="Refresh" hint="Reload from server" onClick={onRefresh} />
+        <NavBtn Icon={SettingsIcon} label="Settings" hint="Settings" onClick={onOpenSettings} />
       </div>
     </aside>
   );
 }
 
-function timeAgo(d: Date) {
-  const s = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (s < 5) return 'just now';
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  return `${h}h ago`;
+// Local refresh icon — mirrors the design's IRefresh shape.
+function RefreshIconLocal({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
 }

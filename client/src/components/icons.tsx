@@ -18,8 +18,43 @@ const wrap = (path: ReactNode) => ({ size = 18, ...rest }: IconProps) => (
 
 export const StickyIcon = wrap(
   <>
-    <path d="M5 5h10l4 4v10H5z" />
-    <path d="M15 5v4h4" />
+    <path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10l6-6V5a2 2 0 0 0-2-2z" />
+    <path d="M13 17v6" />
+    <path d="M13 17h6" />
+  </>
+);
+
+export const TextIcon = wrap(
+  <>
+    <path d="M4 7V4h16v3" />
+    <path d="M9 20h6" />
+    <path d="M12 4v16" />
+  </>
+);
+
+export const EnterChevron = wrap(<path d="m9 18 6-6-6-6" strokeWidth={2.2} />);
+
+export const UndoIcon = wrap(
+  <>
+    <path d="M3 7v6h6" />
+    <path d="M3 13C5 7 10 3 16 3a9 9 0 0 1 0 18c-4 0-7.5-2-9-5" />
+  </>
+);
+
+export const RedoIcon = wrap(
+  <>
+    <path d="M21 7v6h-6" />
+    <path d="M21 13c-2-6-7-10-13-10a9 9 0 0 0 0 18c4 0 7.5-2 9-5" />
+  </>
+);
+
+export const ScissorsIcon = wrap(
+  <>
+    <circle cx="6" cy="6" r="3" />
+    <circle cx="6" cy="18" r="3" />
+    <path d="M20 4 8.12 15.88" />
+    <path d="m14.47 14.48 5.53 5.52" />
+    <path d="M8.12 8.12 12 12" />
   </>
 );
 

@@ -5,6 +5,7 @@ import { api } from '../api';
 export default function Landing() {
   const nav = useNavigate();
   const [value, setValue] = useState('');
+  const [focus, setFocus] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -20,7 +21,6 @@ export default function Landing() {
       setErr(`No room called "${trimmed}". You can Create it instead.`);
     } finally { setBusy(false); }
   }
-
   async function handleCreate() {
     if (!trimmed) { setErr('Type a room name first.'); return; }
     setBusy(true); setErr(null);
@@ -40,43 +40,74 @@ export default function Landing() {
   }
 
   return (
-    <div className="min-h-full flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-lg bg-ink text-paper flex items-center justify-center font-bold text-lg">M</div>
-          <h1 className="text-4xl font-semibold tracking-tight">M-Board</h1>
-        </div>
-        <p className="text-ink/60 mb-8">A visual board for you and your people.</p>
-
-        <div className="rounded-2xl bg-white shadow-sm border border-black/5 p-5">
-          <div className="flex gap-2 items-stretch">
-            <input
-              autoFocus
-              className="flex-1 rounded-lg border border-black/10 bg-paper px-3 py-2 focus:outline-none focus:border-black/40"
-              placeholder="Room name (e.g. maher)"
-              value={value}
-              maxLength={30}
-              onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  if (e.shiftKey) handleCreate(); else handleJoin();
-                }
-              }}
-            />
-            <div className="flex flex-col gap-1 w-24">
-              <button
-                onClick={handleJoin}
-                disabled={busy}
-                className="rounded-lg bg-ink text-paper py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >Join</button>
-              <button
-                onClick={handleCreate}
-                disabled={busy}
-                className="rounded-md text-xs text-ink/70 hover:text-ink hover:underline py-1"
-              >Create new</button>
-            </div>
+    <div
+      className="min-h-screen flex items-center justify-center p-6"
+      style={{
+        background: 'radial-gradient(ellipse 90% 55% at 50% -5%, rgba(217,116,53,0.13), transparent 65%), #F3EDE0',
+      }}
+    >
+      <div className="w-full max-w-[420px] animate-fadeUp">
+        <div className="flex items-center gap-3.5 mb-2">
+          <div
+            className="w-[50px] h-[50px] rounded-2xl flex items-center justify-center text-white font-extrabold text-2xl"
+            style={{
+              background: 'linear-gradient(140deg, #D97435, #E8B830)',
+              boxShadow: '0 6px 20px rgba(217,116,53,0.50)',
+            }}
+          >M</div>
+          <div>
+            <h1 className="text-[28px] font-extrabold text-ink tracking-tight leading-tight">MaherBoard</h1>
+            <p className="text-[13px] text-ink/50 mt-0.5">Your visual thinking space</p>
           </div>
-          <p className="text-xs text-ink/50 mt-3">
+        </div>
+
+        <div className="h-7" />
+
+        <div
+          className="rounded-[22px] border border-ink/10 p-7"
+          style={{ background: '#FDFAF5', boxShadow: '0 8px 40px rgba(26,21,16,0.09)' }}
+        >
+          <label className="block text-[11px] font-bold text-ink/50 uppercase tracking-[0.09em] mb-2">Room name</label>
+          <input
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onFocus={() => setFocus(true)}
+            onBlur={() => setFocus(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (e.shiftKey) handleCreate(); else handleJoin();
+              }
+            }}
+            placeholder="e.g. maher-projects"
+            maxLength={30}
+            className="w-full px-4 py-[13px] rounded-2xl text-[15px] text-ink outline-none transition-colors"
+            style={{
+              border: `2px solid ${focus ? '#D97435' : 'rgba(26,21,16,0.10)'}`,
+              background: '#F3EDE0',
+            }}
+          />
+          <div className="flex gap-2.5 mt-3.5">
+            <button
+              onClick={handleJoin}
+              disabled={busy}
+              className="flex-1 py-[13px] rounded-2xl border-0 text-white font-bold text-[15px] disabled:opacity-50"
+              style={{
+                background: 'linear-gradient(135deg, #D97435, #F08848)',
+                boxShadow: '0 3px 16px rgba(217,116,53,0.40)',
+              }}
+            >Join room →</button>
+            <button
+              onClick={handleCreate}
+              disabled={busy}
+              className="px-5 py-[13px] rounded-2xl text-ink/50 font-semibold text-[14px] disabled:opacity-50"
+              style={{
+                border: '2px solid rgba(26,21,16,0.10)',
+                background: 'transparent',
+              }}
+            >Create</button>
+          </div>
+          <p className="text-[11px] text-ink/50 mt-3 leading-snug">
             Pick any name (2–30 chars, letters/numbers/hyphens). The name <em>is</em> the link your friends use.
           </p>
         </div>

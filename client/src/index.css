@@ -6,26 +6,22 @@ html, body, #root {
   height: 100%;
   margin: 0;
   overscroll-behavior: none;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
 }
 
 body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   touch-action: none;
-  /* Kill iOS long-press selection/callout/tap-highlight everywhere by
-     default. Inputs opt back in below. This is what was making the
-     toolbar buttons "select" (and interrupt drawing) when the user
-     pressed and held with a finger or pen. */
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  background: #F3EDE0;
+  color: #1A1510;
 }
 
-/* Re-enable text selection only where the user is actually editing. */
-input,
-textarea,
-[contenteditable="true"] {
+input, textarea, [contenteditable="true"] {
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
@@ -33,12 +29,16 @@ textarea,
 
 button {
   touch-action: manipulation;
+  font-family: inherit;
 }
 
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
+
+/* Cream canvas with subtle 10% dotted grid. */
 .board-bg {
-  background-color: #f6f2ea;
-  background-image:
-    radial-gradient(rgba(0,0,0,0.08) 1px, transparent 1px);
+  background-color: #F3EDE0;
+  background-image: radial-gradient(rgba(26,21,16,0.10) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 

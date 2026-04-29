@@ -4,8 +4,9 @@ import { api } from '../api';
 import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
 import Canvas, { type CanvasHandle } from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
-import Breadcrumbs from '../components/Breadcrumbs';
-import DrawToolbar, { type Mode } from '../components/DrawToolbar';
+import TopBar from '../components/TopBar';
+import CanvasDock from '../components/CanvasDock';
+import DrawTray, { type DrawTool, type SizeKey, type ShapeKey } from '../components/DrawTray';
 import SettingsModal from '../components/SettingsModal';
 import { useHistory } from '../hooks/useHistory';
 
@@ -14,6 +15,11 @@ interface Snap {
   strokes: Stroke[];
   name: string;
 }
+
+// Visible board-enter animation duration (ms). Must match the canvasIn
+// keyframes in tailwind.config.js (~480ms) plus a small buffer so the
+// overlay covers the navigation cleanly.
+const ENTER_ANIM_MS = 600;
 
 export default function BoardPage() {
   const { code, boardId } = useParams();
@@ -25,28 +31,26 @@ export default function BoardPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [, setLastSavedAt] = useState<Date | null>(null);
 
-  const [mode, setMode] = useState<Mode>('drag');
-  const [drawColor, setDrawColor] = useState('#1b1b1b');
-  const [drawWidth, setDrawWidth] = useState(2);
-  const [drawTool, setDrawTool] = useState<'pen' | 'fountain' | 'pencil' | 'marker' | 'brush'>('pen');
-  // Persist pen-only across sessions on the same device — most users will
-  // either always be on iPad with a pencil or never.
+  // Move vs Draw is the top-level mode; the sub-tool selects pencil/eraser/etc.
+  const [isMove, setIsMove] = useState(true);
+  const [drawOpen, setDrawOpen] = useState(false);
+  const [drawTool, setDrawTool] = useState<DrawTool>('pencil');
+  const [drawColor, setDrawColor] = useState('#1a1510');
+  const [penSize, setPenSize] = useState<SizeKey>('md');
+  const [eraserSize, setEraserSize] = useState<SizeKey>('md');
+  const [shapeType, setShapeType] = useState<ShapeKey>('rect');
+  const [enteringName, setEnteringName] = useState<string | null>(null);
+
   const [penOnly, setPenOnly] = useState<boolean>(() => {
     try { return localStorage.getItem('milart.penOnly') === '1'; } catch { return false; }
   });
-  function togglePenOnly(v: boolean) {
-    setPenOnly(v);
-    try { localStorage.setItem('milart.penOnly', v ? '1' : '0'); } catch { /* ignore */ }
-  }
+  void setPenOnly; // settings-driven; keep state available for future toggle
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const canvasRef = useRef<CanvasHandle>(null);
 
-  // Combined snapshot for undo history. Recreated only when one of its
-  // members actually changes, so the history hook doesn't see a new
-  // identity on every unrelated render.
   const snap = useMemo<Snap>(() => ({ items, strokes, name }), [items, strokes, name]);
   const history = useHistory<Snap>(snap, (s) => {
     setItems(s.items);
@@ -54,7 +58,6 @@ export default function BoardPage() {
     setName(s.name);
   });
 
-  // Cmd/Ctrl + Z to undo, +Shift to redo. Skipped while typing in inputs.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null;
@@ -71,7 +74,6 @@ export default function BoardPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [history]);
 
-  // history.reset accessed via ref so load()'s identity is stable.
   const historyResetRef = useRef(history.reset);
   historyResetRef.current = history.reset;
 
@@ -86,7 +88,6 @@ export default function BoardPage() {
         return;
       }
       const b = await api.getBoard(targetId);
-      // Wipe undo history so the user can't undo across a load boundary.
       historyResetRef.current();
       setBoard(b);
       setItems(b.items);
@@ -105,18 +106,18 @@ export default function BoardPage() {
   const savedRef = useRef<string>('');
   useEffect(() => {
     if (!board) return;
-    const snap = JSON.stringify({ items, strokes, name });
+    const s = JSON.stringify({ items, strokes, name });
     const initial = JSON.stringify({ items: board.items, strokes: board.strokes || [], name: board.name });
-    if (savedRef.current === '' && snap === initial) {
-      savedRef.current = snap;
+    if (savedRef.current === '' && s === initial) {
+      savedRef.current = s;
       return;
     }
-    if (snap === savedRef.current) return;
+    if (s === savedRef.current) return;
     setSaving('saving');
     const t = setTimeout(async () => {
       try {
         const res = await api.saveBoard(board._id, items, strokes, name);
-        savedRef.current = snap;
+        savedRef.current = s;
         setSaving('saved');
         setLastSavedAt(new Date(res.updatedAt));
       } catch {
@@ -129,15 +130,9 @@ export default function BoardPage() {
   function addItem(item: BaseItem) {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
   }
-  // Sidebar passes a partial template; we drop it at the visible center.
-  // Falls back to (0,0) on the very first render before the canvas mounts.
   function addItemAtCenter(template: Omit<BaseItem, 'x' | 'y'>) {
     const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
-    addItem({
-      ...template,
-      x: c.x - template.w / 2,
-      y: c.y - template.h / 2,
-    } as BaseItem);
+    addItem({ ...template, x: c.x - template.w / 2, y: c.y - template.h / 2 } as BaseItem);
   }
   function updateItem(id: string, patch: Partial<BaseItem>) {
     setItems((xs) => xs.map((it) => (it.id === id ? { ...it, ...patch } : it)));
@@ -149,7 +144,6 @@ export default function BoardPage() {
     const setIds = new Set(ids);
     setItems((xs) => xs.filter((it) => !setIds.has(it.id)));
   }
-  // Translate every item whose id is in `ids` by (dx, dy).
   function moveItems(ids: string[], delta: { dx: number; dy: number }) {
     const setIds = new Set(ids);
     setItems((xs) =>
@@ -175,21 +169,37 @@ export default function BoardPage() {
       await api.saveBoard(board._id, updated, strokes, name);
       savedRef.current = JSON.stringify({ items: updated, strokes, name });
     }
-    nav(`/r/${code}/b/${bid}`);
+    // Show the zoom-fade overlay for ENTER_ANIM_MS, then navigate.
+    setEnteringName(d.name || 'Untitled');
+    setTimeout(() => {
+      setEnteringName(null);
+      nav(`/r/${code}/b/${bid}`);
+    }, ENTER_ANIM_MS);
   }
 
-  if (loading) return <div className="p-6 text-ink/60">Loading…</div>;
+  function toggleDraw() {
+    setDrawOpen((o) => {
+      const next = !o;
+      if (next) setIsMove(false); else setIsMove(true);
+      return next;
+    });
+  }
+  function activateMove() {
+    setIsMove(true);
+    setDrawOpen(false);
+  }
+
+  if (loading) return <div className="p-6 text-ink/50">Loading…</div>;
   if (err || !board) return <div className="p-6 text-red-600">Error: {err ?? 'not found'}</div>;
 
   return (
-    <div className="h-full w-full flex">
+    <div className="h-full w-full flex" style={{ background: '#F3EDE0' }}>
       <Sidebar
         roomCode={code!}
         onAdd={addItemAtCenter}
         onRefresh={load}
         onOpenSettings={() => setSettingsOpen(true)}
         saving={saving}
-        lastSavedAt={lastSavedAt}
       />
       <SettingsModal
         open={settingsOpen}
@@ -205,34 +215,28 @@ export default function BoardPage() {
           setSettingsOpen(false);
         }}
       />
+
       <div className="flex-1 relative overflow-hidden">
-        <Breadcrumbs
+        <TopBar
           roomCode={code!}
           crumbs={board.breadcrumbs}
           currentName={name}
+          saving={saving}
           onRename={setName}
         />
-        <DrawToolbar
-          mode={mode}
-          color={drawColor}
-          width={drawWidth}
-          tool={drawTool}
-          penOnly={penOnly}
-          onMode={setMode}
-          onColor={setDrawColor}
-          onWidth={setDrawWidth}
-          onTool={setDrawTool}
-          onPenOnly={togglePenOnly}
-        />
+
         <Canvas
           ref={canvasRef}
           items={items}
           strokes={strokes}
-          mode={mode}
-          drawColor={drawColor}
-          drawWidth={drawWidth}
+          isMove={isMove}
+          drawOpen={drawOpen}
           drawTool={drawTool}
+          drawColor={drawColor}
+          penSize={penSize}
+          eraserSize={eraserSize}
           penOnly={penOnly}
+          enteringName={enteringName}
           onUpdate={updateItem}
           onUpdateMany={moveItems}
           onDelete={deleteItem}
@@ -240,6 +244,32 @@ export default function BoardPage() {
           onAdd={addItem}
           onSetStrokes={setStrokes}
           onEnterBoard={enterBoard}
+        />
+
+        <CanvasDock
+          isMove={isMove}
+          drawOpen={drawOpen}
+          canUndo={history.canUndo}
+          canRedo={history.canRedo}
+          onMove={activateMove}
+          onDraw={toggleDraw}
+          onUndo={history.undo}
+          onRedo={history.redo}
+        />
+
+        <DrawTray
+          open={drawOpen}
+          drawTool={drawTool}
+          penColor={drawColor}
+          penSize={penSize}
+          eraserSize={eraserSize}
+          shapeType={shapeType}
+          onToolChange={setDrawTool}
+          onColorChange={setDrawColor}
+          onPenSizeChange={setPenSize}
+          onEraserSizeChange={setEraserSize}
+          onShapeChange={setShapeType}
+          onClose={() => { setDrawOpen(false); setIsMove(true); }}
         />
       </div>
     </div>

@@ -4,17 +4,21 @@ import type { BaseItem, Stroke } from '../types';
 import { api } from '../api';
 import ItemView from './ItemView';
 import StrokeLayer from './StrokeLayer';
-import type { Mode } from './DrawToolbar';
+import type { DrawTool, SizeKey } from './DrawTray';
 import { PlusIcon, MinusIcon, FitIcon } from './icons';
 
 interface Props {
   items: BaseItem[];
   strokes: Stroke[];
-  mode: Mode;
+  // Editing mode comes from BoardPage; 'drag' = move tool, 'draw' = pen mode active.
+  isMove: boolean;
+  drawOpen: boolean;
+  drawTool: DrawTool;
   drawColor: string;
-  drawWidth: number;
-  drawTool: string;
+  penSize: SizeKey;
+  eraserSize: SizeKey;
   penOnly: boolean;
+  enteringName: string | null;
   onUpdate: (id: string, patch: Partial<BaseItem>) => void;
   onUpdateMany: (ids: string[], delta: { dx: number; dy: number }) => void;
   onDelete: (id: string) => void;
@@ -31,22 +35,38 @@ export interface CanvasHandle {
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.5;
 
-const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
-  items, strokes, mode, drawColor, drawWidth, drawTool, penOnly,
-  onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onEnterBoard,
-}, ref) {
+// Map S/M/L to actual stroke widths.
+const SIZE_TO_PX: Record<SizeKey, number> = { sm: 2, md: 4, lg: 8 };
+
+// Point-in-polygon test for lasso selection.
+function ptInPoly(px: number, py: number, poly: [number, number][]) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > py) !== (yj > py)) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
+  const {
+    items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
+    enteringName, onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onEnterBoard,
+  } = props;
+
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
+  const [lassoActive, setLassoActive] = useState(false);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
-  const marqueeStart = useRef<{ wx: number; wy: number } | null>(null);
 
-  const drawMode = mode !== 'drag';
-  const eraser = mode === 'erase';
-  const interactive = mode === 'drag';
+  const inDrawMode  = drawOpen && drawTool === 'pencil';
+  const inEraseMode = drawOpen && drawTool === 'eraser';
+  const inSelectMode = drawOpen && drawTool === 'select';
+  const interactive = isMove && !drawOpen;
 
   function toWorld(clientX: number, clientY: number) {
     const rect = wrapRef.current!.getBoundingClientRect();
@@ -59,7 +79,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
     const rect = wrapRef.current!.getBoundingClientRect();
     return toWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
-
   useImperativeHandle(ref, () => ({ getCenter: centerOfView }));
 
   function zoomAround(clientX: number, clientY: number, nextScale: number) {
@@ -77,59 +96,57 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
   }
   function resetView() { setView({ x: 0, y: 0, scale: 1 }); }
 
-  // Background pointerdown:
-  //   - in draw mode: ignored (StrokeLayer handles)
-  //   - shift held: start a marquee for multi-select
-  //   - otherwise: start a pan
   function onBgPointerDown(e: React.PointerEvent) {
-    if (drawMode) return;
+    if (drawOpen && drawTool !== 'select') return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
-    if (!e.shiftKey) setSelection(new Set());
 
-    if (e.shiftKey || e.button === 2) {
-      // Marquee
-      const w = toWorld(e.clientX, e.clientY);
-      marqueeStart.current = { wx: w.x, wy: w.y };
-      setMarquee({ x0: w.x, y0: w.y, x1: w.x, y1: w.y });
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (inSelectMode) {
+      // Start lasso polygon
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const p = toWorld(e.clientX, e.clientY);
+      setLassoPath([[p.x, p.y]]);
+      setLassoActive(true);
+      setSelection(new Set());
       return;
     }
 
+    // Otherwise, pan the canvas (drag mode only).
+    if (!interactive) return;
+    if (!e.shiftKey) setSelection(new Set());
     setPanning(true);
     panStart.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
+
   function onBgPointerMove(e: React.PointerEvent) {
-    if (marqueeStart.current) {
-      const w = toWorld(e.clientX, e.clientY);
-      setMarquee({
-        x0: marqueeStart.current.wx,
-        y0: marqueeStart.current.wy,
-        x1: w.x, y1: w.y,
-      });
+    if (lassoActive) {
+      const p = toWorld(e.clientX, e.clientY);
+      setLassoPath((prev) => [...prev, [p.x, p.y]]);
       return;
     }
     const ps = panStart.current;
     if (!panning || !ps) return;
     setView((v) => ({ ...v, x: ps.vx + (e.clientX - ps.px), y: ps.vy + (e.clientY - ps.py) }));
   }
+
   function onBgPointerUp(e: React.PointerEvent) {
-    if (marqueeStart.current && marquee) {
-      const x0 = Math.min(marquee.x0, marquee.x1);
-      const x1 = Math.max(marquee.x0, marquee.x1);
-      const y0 = Math.min(marquee.y0, marquee.y1);
-      const y1 = Math.max(marquee.y0, marquee.y1);
-      const hits = items
-        .filter((it) => it.x < x1 && it.x + it.w > x0 && it.y < y1 && it.y + it.h > y0)
-        .map((it) => it.id);
-      setSelection((prev) => {
-        const next = new Set(prev);
-        for (const id of hits) next.add(id);
-        return next;
-      });
+    if (lassoActive) {
+      setLassoActive(false);
+      const poly = lassoPath;
+      if (poly.length >= 3) {
+        const hits = new Set<string>();
+        items.forEach((it) => {
+          const cx = it.x + it.w / 2;
+          const cy = it.y + it.h / 2;
+          if (ptInPoly(cx, cy, poly)) hits.add(it.id);
+        });
+        setSelection(hits);
+      }
+      // Fade out the polygon shortly so it doesn't linger.
+      setTimeout(() => setLassoPath([]), 600);
+      try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      return;
     }
-    marqueeStart.current = null;
-    setMarquee(null);
     setPanning(false);
     panStart.current = null;
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
@@ -146,7 +163,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
     }
   }
 
-  function placeImageNow(url: string, cx: number, cy: number, defaultW = 280, defaultH = 200) {
+  function placeImageNow(url: string, cx: number, cy: number, defaultW = 218, defaultH = 148) {
     onAdd({
       id: nanoid(10),
       type: 'image',
@@ -205,11 +222,11 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
         onAdd({
           id: nanoid(10),
           type: isUrl ? 'link' : 'sticky',
-          x: pos.x - 110, y: pos.y - 60,
-          w: isUrl ? 260 : 220,
-          h: isUrl ? 60 : 160,
+          x: pos.x - 99, y: pos.y - 33,
+          w: isUrl ? 218 : 198,
+          h: isUrl ? 44 : 164,
           z: 0,
-          data: isUrl ? { url: text.trim(), title: text.trim() } : { text, color: '#fff7ae' },
+          data: isUrl ? { url: text.trim(), title: text.trim() } : { text, color: '#FFF3C4' },
         });
       }
     }
@@ -217,7 +234,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
     return () => window.removeEventListener('paste', onPaste);
   });
 
-  // Delete deletes the whole selection.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null;
@@ -240,29 +256,31 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
       if (additive) {
         if (next.has(id)) next.delete(id); else next.add(id);
       } else {
-        if (next.size === 1 && next.has(id)) return next;
         return new Set([id]);
       }
       return next;
     });
   }
 
-  // Group move: when a selected item is dragged, all selected items move
-  // by the same delta. Implemented via the onUpdateMany callback.
   function moveGroup(ids: string[], dx: number, dy: number) {
     onUpdateMany(ids, { dx, dy });
   }
 
   const cursor =
-    mode === 'pen' ? 'crosshair' :
-    mode === 'erase' ? 'cell' :
-    panning ? 'grabbing' : 'grab';
+    inSelectMode  ? 'crosshair' :
+    inEraseMode   ? 'cell' :
+    inDrawMode    ? 'crosshair' :
+    panning       ? 'grabbing' : 'grab';
+
+  const lassoPoints = lassoPath
+    .map(([x, y]) => `${x * view.scale + view.x},${y * view.scale + view.y}`)
+    .join(' ');
 
   return (
     <div
       ref={wrapRef}
-      className={`absolute inset-0 board-bg no-select ${dragOver ? 'ring-4 ring-inset ring-blue-400/50' : ''}`}
-      style={{ cursor }}
+      className={`absolute inset-0 board-bg no-select ${dragOver ? 'ring-4 ring-inset ring-amber/50' : ''}`}
+      style={{ cursor, top: 46 /* leave room for TopBar */ }}
       onPointerDown={onBgPointerDown}
       onPointerMove={onBgPointerMove}
       onPointerUp={onBgPointerUp}
@@ -292,48 +310,99 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas({
             onEnterBoard={() => onEnterBoard(it.id)}
           />
         ))}
-
-        {/* Marquee rectangle (shift-drag on background). */}
-        {marquee && (
-          <div
-            className="absolute pointer-events-none border border-blue-500/70 bg-blue-500/10"
-            style={{
-              left: Math.min(marquee.x0, marquee.x1),
-              top: Math.min(marquee.y0, marquee.y1),
-              width: Math.abs(marquee.x1 - marquee.x0),
-              height: Math.abs(marquee.y1 - marquee.y0),
-            }}
-          />
-        )}
       </div>
 
       <StrokeLayer
         view={view}
         strokes={strokes}
-        drawMode={drawMode}
+        drawMode={inDrawMode || inEraseMode}
         color={drawColor}
-        width={drawWidth}
-        tool={drawTool}
-        eraser={eraser}
+        width={inEraseMode ? SIZE_TO_PX[eraserSize] : SIZE_TO_PX[penSize]}
+        tool="pen"
+        eraser={inEraseMode}
         penOnly={penOnly}
         onChange={onSetStrokes}
         toWorld={toWorld}
       />
 
-      <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-white/95 backdrop-blur rounded-lg shadow border border-black/10 p-1 text-xs">
-        <button onClick={() => bumpZoom(-0.15)} className="w-7 h-7 rounded-md hover:bg-ink/5 flex items-center justify-center" title="Zoom out"><MinusIcon size={14} /></button>
-        <button onClick={resetView} className="px-2 h-7 rounded-md hover:bg-ink/5 flex items-center gap-1 tabular-nums" title="Reset view (100%)">
-          <FitIcon size={12} />
-          <span>{Math.round(view.scale * 100)}%</span>
-        </button>
-        <button onClick={() => bumpZoom(0.15)} className="w-7 h-7 rounded-md hover:bg-ink/5 flex items-center justify-center" title="Zoom in"><PlusIcon size={14} /></button>
-      </div>
+      {/* Lasso polygon (marching ants) */}
+      {lassoPath.length > 1 && (
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-30">
+          <polygon
+            points={lassoPoints}
+            fill="rgba(217,116,53,0.08)"
+            stroke="#D97435"
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            strokeLinejoin="round"
+            className="animate-marchAnt"
+          />
+        </svg>
+      )}
 
-      {selection.size > 1 && (
-        <div className="absolute bottom-3 left-3 bg-ink text-paper rounded-lg shadow px-3 py-1 text-xs">
-          {selection.size} selected — drag any to move all, Delete to remove, Esc to clear
+      {/* Multi-select count */}
+      {selection.size > 0 && !lassoActive && (
+        <div
+          className="absolute top-3.5 left-1/2 -translate-x-1/2 z-[35] text-white text-[12px] font-bold px-3.5 py-1.5 rounded-full animate-fadeUp"
+          style={{ background: '#D97435', boxShadow: '0 3px 14px rgba(217,116,53,0.50)' }}
+        >
+          {selection.size} item{selection.size > 1 ? 's' : ''} selected — switch to Move to drag
         </div>
       )}
+
+      {/* Board enter overlay (zoom-fade in) */}
+      {enteringName && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none animate-canvasIn"
+          style={{ background: '#F3EDE0' }}
+        >
+          <div className="text-center animate-fadeUp" style={{ animationDelay: '0.1s' }}>
+            <div
+              className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white"
+              style={{
+                background: 'linear-gradient(135deg, #D97435, #E8B830)',
+                boxShadow: '0 8px 28px rgba(217,116,53,0.50)',
+              }}
+            >
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+            </div>
+            <div className="text-[22px] font-extrabold text-ink tracking-tight">{enteringName}</div>
+            <div className="text-[13px] text-ink/50 mt-1.5">Opening board…</div>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom-right zoom dock — design styling */}
+      <div
+        className="absolute bottom-[22px] right-4 z-20 rounded-[13px] border border-ink/10 flex items-center p-1 gap-px"
+        style={{
+          background: 'rgba(253,250,245,0.96)',
+          backdropFilter: 'blur(14px)',
+          boxShadow: '0 4px 18px rgba(26,21,16,0.09)',
+        }}
+      >
+        <button
+          onClick={() => bumpZoom(-0.15)}
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-ink/50 hover:bg-ink/10 transition-colors"
+          title="Zoom out"
+        ><MinusIcon size={14} /></button>
+        <button
+          onClick={resetView}
+          className="px-2.5 h-7 rounded-lg flex items-center gap-1 text-ink/50 hover:bg-ink/10 transition-colors text-[12px] font-bold tabular-nums"
+          title="Reset (100%)"
+        >
+          <FitIcon size={12} />
+          {Math.round(view.scale * 100)}%
+        </button>
+        <button
+          onClick={() => bumpZoom(0.15)}
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-ink/50 hover:bg-ink/10 transition-colors"
+          title="Zoom in"
+        ><PlusIcon size={14} /></button>
+      </div>
     </div>
   );
 });
