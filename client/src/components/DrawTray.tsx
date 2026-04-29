@@ -1,8 +1,7 @@
 import { useRef, useState } from 'react';
 
-export type DrawTool = 'pencil' | 'eraser' | 'shapes' | 'select';
+export type DrawTool = 'pencil' | 'eraser' | 'select';
 export type SizeKey  = 'sm' | 'md' | 'lg';
-export type ShapeKey = 'line' | 'rect' | 'circle';
 
 interface Props {
   open: boolean;
@@ -10,12 +9,10 @@ interface Props {
   penColor: string;
   penSize: SizeKey;
   eraserSize: SizeKey;
-  shapeType: ShapeKey;
   onToolChange: (t: DrawTool) => void;
   onColorChange: (c: string) => void;
   onPenSizeChange: (s: SizeKey) => void;
   onEraserSizeChange: (s: SizeKey) => void;
-  onShapeChange: (s: ShapeKey) => void;
   onClose: () => void;
 }
 
@@ -30,7 +27,6 @@ export default function DrawTray(props: Props) {
 
   const colorsDisabled = drawTool === 'eraser' || drawTool === 'select';
   const sizeDisabled   = drawTool === 'select';
-  const shapeDisabled  = drawTool !== 'shapes';
 
   return (
     <div className="absolute bottom-0 left-0 right-0 z-40 flex justify-center pointer-events-none">
@@ -61,9 +57,6 @@ export default function DrawTray(props: Props) {
             </ToolBtn>
             <ToolBtn active={drawTool === 'eraser'} onClick={() => props.onToolChange('eraser')}>
               <EraserArt active={drawTool === 'eraser'} />
-            </ToolBtn>
-            <ToolBtn active={drawTool === 'shapes'} onClick={() => props.onToolChange('shapes')}>
-              <ShapesArt active={drawTool === 'shapes'} />
             </ToolBtn>
             <ToolBtn active={drawTool === 'select'} onClick={() => props.onToolChange('select')}>
               <SelectArt active={drawTool === 'select'} />
@@ -118,33 +111,15 @@ export default function DrawTray(props: Props) {
             ))}
           </div>
 
-          <Divider mx={[14, 10]} />
-
-          {/* Shape sub-buttons — always present, dimmed when not Shapes */}
-          <div
-            className="flex gap-1 transition-opacity"
-            style={{
-              opacity: shapeDisabled ? 0.3 : 1,
-              pointerEvents: shapeDisabled ? 'none' : 'auto',
-            }}
-          >
-            <ShapeBtn active={props.shapeType === 'line'} onClick={() => props.onShapeChange('line')}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 19 19 5"/></svg>
-            </ShapeBtn>
-            <ShapeBtn active={props.shapeType === 'rect'} onClick={() => props.onShapeChange('rect')}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-            </ShapeBtn>
-            <ShapeBtn active={props.shapeType === 'circle'} onClick={() => props.onShapeChange('circle')}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/></svg>
-            </ShapeBtn>
-          </div>
-
           {drawTool === 'select' && (
-            <div className="ml-2.5 flex items-center">
-              <span className="text-[11px] text-ink/50 font-medium leading-tight max-w-[160px]">
-                Draw around<br/>items to select
-              </span>
-            </div>
+            <>
+              <Divider mx={[14, 10]} />
+              <div className="flex items-center">
+                <span className="text-[11px] text-ink/50 font-medium leading-tight max-w-[160px]">
+                  Draw around<br/>items to select
+                </span>
+              </div>
+            </>
           )}
         </div>
 
@@ -183,27 +158,6 @@ function ToolBtn({ active, onClick, children }: { active: boolean; onClick: () =
           background: active ? '#D97435' : 'rgba(26,21,16,0.10)',
         }}
       />
-    </button>
-  );
-}
-
-function ShapeBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  const [hov, setHov] = useState(false);
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      className="rounded-lg flex items-center justify-center transition-all cursor-pointer"
-      style={{
-        width: 30,
-        height: 30,
-        border: `1.5px solid ${active ? '#D97435' : 'rgba(26,21,16,0.10)'}`,
-        background: active ? 'rgba(217,116,53,0.09)' : (hov ? 'rgba(26,21,16,0.04)' : 'transparent'),
-        color: active ? '#D97435' : 'rgba(26,21,16,0.50)',
-      }}
-    >
-      {children}
     </button>
   );
 }
@@ -278,18 +232,6 @@ function EraserArt({ active }: { active: boolean }) {
       <rect x="2" y="9"  width="26" height="22" rx="4" fill={body}/>
       <rect x="2" y="9"  width="26" height="8"  rx="4" fill={stripe}/>
       <rect x="2" y="28" width="26" height="3"  rx="1.5" fill="rgba(0,0,0,0.07)"/>
-    </svg>
-  );
-}
-
-function ShapesArt({ active }: { active: boolean }) {
-  const s1 = active ? '#D97435' : '#BBBBBB';
-  const s2 = active ? '#E8B830' : '#CCCCCC';
-  return (
-    <svg width="30" height="44" viewBox="0 0 30 44"
-      style={{ filter: active ? 'drop-shadow(0 2px 6px rgba(217,116,53,0.45))' : 'none', transition: 'filter 0.18s' }}>
-      <circle cx="15" cy="16" r="9"  fill="none" stroke={s1} strokeWidth="2.2"/>
-      <rect   x="7"  y="22"  width="16" height="13" rx="2.5" fill="none" stroke={s2} strokeWidth="2.2"/>
     </svg>
   );
 }

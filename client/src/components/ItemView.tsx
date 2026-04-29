@@ -14,26 +14,47 @@ interface Props {
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
   onDelete: () => void;
   onEnterBoard: () => void;
+  onConnectionStart?: (e: React.PointerEvent, fromId: string) => void;
+  onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
+}
+
+// Detect a YouTube watch URL and return the video id, or null.
+function youTubeId(raw: string): string | null {
+  const s = raw.trim();
+  if (!/^https?:\/\//i.test(s)) return null;
+  try {
+    const u = new URL(s);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+    if (host === 'youtube.com' || host === 'm.youtube.com') {
+      if (u.pathname === '/watch') return u.searchParams.get('v');
+      const m = u.pathname.match(/^\/(embed|shorts|v)\/([^/]+)/);
+      if (m) return m[2];
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 export default function ItemView({
-  item, selected, selectionIds, scale, interactive, onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard,
+  item, selected, selectionIds, scale, interactive,
+  onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard,
+  onConnectionStart, onMoveLayer,
 }: Props) {
   const dragRef = useRef<{
-    px: number;
-    py: number;
-    ix: number;
-    iy: number;
-    iw: number;
-    ih: number;
+    px: number; py: number;
+    ix: number; iy: number;
+    iw: number; ih: number;
     mode: 'move' | 'resize';
     moved: boolean;
   } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const lastDelta = useRef<{ dx: number; dy: number } | null>(null);
 
+  // Body-press only initiates a drag when it lands on plain content. Buttons,
+  // inputs, anchors, iframes, and anything explicitly marked
+  // [data-no-item-drag] are treated as their own targets.
   function canDragFrom(target: EventTarget | null) {
-    return !(target as HTMLElement | null)?.closest('button, input, textarea, a, [data-no-item-drag]');
+    return !(target as HTMLElement | null)?.closest('button, input, textarea, a, iframe, [data-no-item-drag]');
   }
 
   function startDrag(e: React.PointerEvent, mode: 'move' | 'resize') {
@@ -81,10 +102,13 @@ export default function ItemView({
     lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    // Pure click on a board card (no movement) opens it.
     if (item.type === 'board' && d.mode === 'move' && !d.moved) onEnterBoard();
   }
 
   const pos = ghost ?? item;
+  // Compensate the inverse of canvas zoom so chrome stays the same screen
+  // size whether the user has zoomed in or out.
   const controlScale = 1 / scale;
   const fixedControl = (x: string, y: string): React.CSSProperties => ({
     left: x,
@@ -97,6 +121,7 @@ export default function ItemView({
   return (
     <div
       data-item
+      data-item-id={item.id}
       className="group absolute"
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
@@ -129,16 +154,48 @@ export default function ItemView({
         <GripIcon size={14} />
       </button>
 
+      {/* Top-right action cluster (image layering + delete). The wrapper is a
+          single fixed-control point so the buttons stay screen-sized as the
+          canvas zooms. */}
       {selected && (
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="absolute w-[26px] h-[26px] rounded-full bg-ink text-paper shadow flex items-center justify-center"
+        <div
+          className="absolute flex items-center gap-1"
           style={fixedControl('100%', '0%')}
-          title="Delete"
-        ><TrashIcon size={14} /></button>
+        >
+          {item.type === 'image' && onMoveLayer && (
+            <>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onMoveLayer(item.id, 'forward'); }}
+                title="Bring forward"
+                className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m6 15 6-6 6 6"/>
+                </svg>
+              </button>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onMoveLayer(item.id, 'backward'); }}
+                title="Send backward"
+                className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </button>
+            </>
+          )}
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="w-[26px] h-[26px] rounded-full bg-ink text-paper shadow flex items-center justify-center"
+            title="Delete"
+          ><TrashIcon size={14} /></button>
+        </div>
       )}
 
+      {/* Resize handle */}
       <div
         className={`absolute w-6 h-6 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
           selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
@@ -154,6 +211,20 @@ export default function ItemView({
           <path d="M9 21 21 9" /><path d="M14 21 21 14" /><path d="M19 21 21 19" />
         </svg>
       </div>
+
+      {/* Connection-start dot — hover-revealed at the right edge. Pointerdown
+          here hands off to the canvas, which tracks the drag and finalises
+          the connection on pointerup. */}
+      {onConnectionStart && (
+        <button
+          title="Drag to connect"
+          onPointerDown={(e) => { e.stopPropagation(); onConnectionStart(e, item.id); }}
+          className={`absolute w-3 h-3 rounded-full bg-ink shadow ring-2 ring-white cursor-crosshair transition-opacity ${
+            selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
+          style={fixedControl('100%', '50%')}
+        />
+      )}
     </div>
   );
 }
@@ -171,15 +242,13 @@ function Sticky({
     return (
       <textarea
         autoFocus
-        className="w-full h-full resize-none border-0 outline-none p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap transition-shadow"
+        className="w-full h-full resize-none border-0 outline-none p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap"
         placeholder="Type something..."
         value={d.text ?? ''}
         onChange={(e) => onUpdate({ data: { ...d, text: e.target.value } })}
         onBlur={() => setEditing(false)}
         onPointerDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') (e.currentTarget as HTMLTextAreaElement).blur();
-        }}
+        onKeyDown={(e) => { if (e.key === 'Escape') (e.currentTarget as HTMLTextAreaElement).blur(); }}
         style={{
           background: d.color || '#FFF3C4',
           borderRadius: 16,
@@ -191,7 +260,7 @@ function Sticky({
 
   return (
     <div
-      className="w-full h-full p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap transition-shadow overflow-hidden cursor-grab active:cursor-grabbing"
+      className="w-full h-full p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap overflow-hidden cursor-grab active:cursor-grabbing"
       onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
       style={{
         background: d.color || '#FFF3C4',
@@ -199,7 +268,7 @@ function Sticky({
         boxShadow,
       }}
     >
-      {d.text || <span className="text-ink/45 italic">Type something...</span>}
+      {d.text || <span className="text-ink/45 italic">Double-click to type…</span>}
     </div>
   );
 }
@@ -209,7 +278,7 @@ function ImageBox({ item, selected }: { item: BaseItem; selected: boolean }) {
   if (!d.url) {
     return (
       <div
-        className="w-full h-full rounded-2xl flex flex-col items-center justify-center gap-2 text-ink/50 transition-shadow"
+        className="w-full h-full rounded-2xl flex flex-col items-center justify-center gap-2 text-ink/50"
         style={{
           background: 'linear-gradient(135deg, rgba(26,21,16,0.04), rgba(232,184,48,0.10))',
           border: '2px dashed rgba(26,21,16,0.14)',
@@ -232,14 +301,13 @@ function ImageBox({ item, selected }: { item: BaseItem; selected: boolean }) {
   );
 }
 
-// "link"-typed items render as either bare text (when there's no URL)
-// or a subtle blue-underlined link card.
 function TextOrLink({
   item, selected, onUpdate,
 }: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void }) {
   const d = item.data as Partial<LinkData>;
   const txt = (d.title || d.url || '').toString();
   const isUrl = /^https?:\/\/\S+$/i.test(txt.trim());
+  const ytId = isUrl ? youTubeId(txt.trim()) : null;
   const [editing, setEditing] = useState(false);
 
   if (editing) {
@@ -256,11 +324,36 @@ function TextOrLink({
     );
   }
 
-  // Compact URL card
+  // YouTube embed. data-no-item-drag on the wrapper so pressing the iframe
+  // doesn't kick off a card drag — the user can still drag from the grip.
+  if (ytId) {
+    return (
+      <div
+        className="w-full h-full rounded-2xl overflow-hidden"
+        style={{
+          boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)',
+          background: '#000',
+        }}
+        data-no-item-drag
+        onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+      >
+        <iframe
+          src={`https://www.youtube.com/embed/${ytId}?rel=0&modestbranding=1`}
+          className="w-full h-full block"
+          title="YouTube video"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      </div>
+    );
+  }
+
+  // Plain URL chip. Span (not <a>) so clicking doesn't navigate before our
+  // pointerdown handler runs; double-click enters edit mode.
   if (isUrl) {
     return (
       <div
-        className="w-full h-full flex items-center gap-2 px-3 transition-all rounded-lg"
+        className="w-full h-full flex items-center gap-2 px-3 rounded-lg"
         style={{
           background: selected ? 'rgba(217,116,53,0.08)' : 'rgba(26,21,16,0.04)',
           border: `1px solid ${selected ? '#D97435' : 'rgba(26,21,16,0.10)'}`,
@@ -268,9 +361,7 @@ function TextOrLink({
         onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
       >
         <LinkIcon size={13} />
-        <span
-          className="text-[12px] text-blue-600 underline overflow-hidden text-ellipsis whitespace-nowrap"
-        >{txt}</span>
+        <span className="text-[12px] text-blue-600 underline overflow-hidden text-ellipsis whitespace-nowrap">{txt}</span>
       </div>
     );
   }
@@ -278,7 +369,7 @@ function TextOrLink({
   // Bare text
   return (
     <div
-      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5 transition-shadow"
+      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
       style={{
         fontSize: 16, fontWeight: 700, lineHeight: 1.45, letterSpacing: '-0.2px',
         boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
@@ -331,7 +422,21 @@ function BoardRefBox({
           </div>
         )}
 
-        {/* Hover-reveal upload thumbnail button */}
+        {/* Always-visible "Board" badge so this can't be confused with an image
+            once a custom thumbnail is set. */}
+        <div
+          className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[9px] font-bold uppercase tracking-[0.05em] pointer-events-none"
+          style={{
+            background: 'rgba(253,250,245,0.92)',
+            color: '#1A1510',
+            backdropFilter: 'blur(6px)',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.10)',
+          }}
+        >
+          <BoardIcon size={10} />
+          <span>Board</span>
+        </div>
+
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}

@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
-import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
+import type { Board, BaseItem, BoardRefData, Stroke, Connection } from '../types';
 import Canvas, { type CanvasHandle } from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import CanvasDock from '../components/CanvasDock';
-import DrawTray, { type DrawTool, type SizeKey, type ShapeKey } from '../components/DrawTray';
+import DrawTray, { type DrawTool, type SizeKey } from '../components/DrawTray';
 import SettingsModal from '../components/SettingsModal';
 import { useHistory } from '../hooks/useHistory';
 
 interface Snap {
   items: BaseItem[];
   strokes: Stroke[];
+  connections: Connection[];
   name: string;
 }
 
@@ -22,33 +23,35 @@ export default function BoardPage() {
   const [board, setBoard] = useState<Board | null>(null);
   const [items, setItems] = useState<BaseItem[]>([]);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [, setLastSavedAt] = useState<Date | null>(null);
 
-  // Move vs Draw is the top-level mode; the sub-tool selects pencil/eraser/etc.
   const [isMove, setIsMove] = useState(true);
   const [drawOpen, setDrawOpen] = useState(false);
   const [drawTool, setDrawTool] = useState<DrawTool>('pencil');
   const [drawColor, setDrawColor] = useState('#1a1510');
   const [penSize, setPenSize] = useState<SizeKey>('md');
   const [eraserSize, setEraserSize] = useState<SizeKey>('md');
-  const [shapeType, setShapeType] = useState<ShapeKey>('rect');
 
-  const [penOnly, setPenOnly] = useState<boolean>(() => {
+  const [penOnly] = useState<boolean>(() => {
     try { return localStorage.getItem('milart.penOnly') === '1'; } catch { return false; }
   });
-  void setPenOnly; // settings-driven; keep state available for future toggle
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const canvasRef = useRef<CanvasHandle>(null);
 
-  const snap = useMemo<Snap>(() => ({ items, strokes, name }), [items, strokes, name]);
+  const snap = useMemo<Snap>(
+    () => ({ items, strokes, connections, name }),
+    [items, strokes, connections, name],
+  );
   const history = useHistory<Snap>(snap, (s) => {
     setItems(s.items);
     setStrokes(s.strokes);
+    setConnections(s.connections);
     setName(s.name);
   });
 
@@ -86,6 +89,7 @@ export default function BoardPage() {
       setBoard(b);
       setItems(b.items);
       setStrokes(b.strokes || []);
+      setConnections(b.connections || []);
       setName(b.name);
       setLastSavedAt(new Date(b.updatedAt));
     } catch (e) {
@@ -100,8 +104,13 @@ export default function BoardPage() {
   const savedRef = useRef<string>('');
   useEffect(() => {
     if (!board) return;
-    const s = JSON.stringify({ items, strokes, name });
-    const initial = JSON.stringify({ items: board.items, strokes: board.strokes || [], name: board.name });
+    const s = JSON.stringify({ items, strokes, connections, name });
+    const initial = JSON.stringify({
+      items: board.items,
+      strokes: board.strokes || [],
+      connections: board.connections || [],
+      name: board.name,
+    });
     if (savedRef.current === '' && s === initial) {
       savedRef.current = s;
       return;
@@ -110,7 +119,7 @@ export default function BoardPage() {
     setSaving('saving');
     const t = setTimeout(async () => {
       try {
-        const res = await api.saveBoard(board._id, items, strokes, name);
+        const res = await api.saveBoard(board._id, items, strokes, connections, name);
         savedRef.current = s;
         setSaving('saved');
         setLastSavedAt(new Date(res.updatedAt));
@@ -119,7 +128,7 @@ export default function BoardPage() {
       }
     }, 1500);
     return () => clearTimeout(t);
-  }, [items, strokes, name, board]);
+  }, [items, strokes, connections, name, board]);
 
   function addItem(item: BaseItem) {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
@@ -133,10 +142,12 @@ export default function BoardPage() {
   }
   function deleteItem(id: string) {
     setItems((xs) => xs.filter((it) => it.id !== id));
+    setConnections((cs) => cs.filter((c) => c.fromItemId !== id && c.toItemId !== id));
   }
   function deleteItems(ids: string[]) {
     const setIds = new Set(ids);
     setItems((xs) => xs.filter((it) => !setIds.has(it.id)));
+    setConnections((cs) => cs.filter((c) => !setIds.has(c.fromItemId) && !setIds.has(c.toItemId)));
   }
   function moveItems(ids: string[], delta: { dx: number; dy: number }) {
     const setIds = new Set(ids);
@@ -145,6 +156,24 @@ export default function BoardPage() {
         setIds.has(it.id) ? { ...it, x: it.x + delta.dx, y: it.y + delta.dy } : it
       )
     );
+  }
+  // Items are rendered in array order. Bringing forward = move toward end.
+  function moveLayer(id: string, dir: 'forward' | 'backward') {
+    setItems((xs) => {
+      const idx = xs.findIndex((it) => it.id === id);
+      if (idx < 0) return xs;
+      const swapWith = dir === 'forward' ? idx + 1 : idx - 1;
+      if (swapWith < 0 || swapWith >= xs.length) return xs;
+      const next = xs.slice();
+      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      return next;
+    });
+  }
+  function addConnection(c: Connection) {
+    setConnections((cs) => [...cs, c]);
+  }
+  function deleteConnection(id: string) {
+    setConnections((cs) => cs.filter((c) => c.id !== id));
   }
 
   async function enterBoard(itemId: string) {
@@ -160,8 +189,8 @@ export default function BoardPage() {
         x.id === itemId ? { ...x, data: { ...(x.data as object), boardId: bid } } : x
       );
       setItems(updated);
-      await api.saveBoard(board._id, updated, strokes, name);
-      savedRef.current = JSON.stringify({ items: updated, strokes, name });
+      await api.saveBoard(board._id, updated, strokes, connections, name);
+      savedRef.current = JSON.stringify({ items: updated, strokes, connections, name });
     }
     nav(`/r/${code}/b/${bid}`);
   }
@@ -218,6 +247,7 @@ export default function BoardPage() {
           ref={canvasRef}
           items={items}
           strokes={strokes}
+          connections={connections}
           isMove={isMove}
           drawOpen={drawOpen}
           drawTool={drawTool}
@@ -231,6 +261,9 @@ export default function BoardPage() {
           onDeleteMany={deleteItems}
           onAdd={addItem}
           onSetStrokes={setStrokes}
+          onAddConnection={addConnection}
+          onDeleteConnection={deleteConnection}
+          onMoveLayer={moveLayer}
           onEnterBoard={enterBoard}
         />
 
@@ -251,12 +284,10 @@ export default function BoardPage() {
           penColor={drawColor}
           penSize={penSize}
           eraserSize={eraserSize}
-          shapeType={shapeType}
           onToolChange={setDrawTool}
           onColorChange={setDrawColor}
           onPenSizeChange={setPenSize}
           onEraserSizeChange={setEraserSize}
-          onShapeChange={setShapeType}
           onClose={() => { setDrawOpen(false); setIsMove(true); }}
         />
       </div>

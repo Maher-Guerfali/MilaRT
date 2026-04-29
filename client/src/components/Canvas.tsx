@@ -1,16 +1,17 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
-import type { BaseItem, Stroke } from '../types';
+import type { BaseItem, Stroke, Connection } from '../types';
 import { api } from '../api';
 import ItemView from './ItemView';
 import StrokeLayer from './StrokeLayer';
+import ConnectionLayer from './ConnectionLayer';
 import type { DrawTool, SizeKey } from './DrawTray';
 import { PlusIcon, MinusIcon, FitIcon } from './icons';
 
 interface Props {
   items: BaseItem[];
   strokes: Stroke[];
-  // Editing mode comes from BoardPage; 'drag' = move tool, 'draw' = pen mode active.
+  connections: Connection[];
   isMove: boolean;
   drawOpen: boolean;
   drawTool: DrawTool;
@@ -24,6 +25,9 @@ interface Props {
   onDeleteMany: (ids: string[]) => void;
   onAdd: (item: BaseItem) => void;
   onSetStrokes: (next: Stroke[]) => void;
+  onAddConnection: (c: Connection) => void;
+  onDeleteConnection: (id: string) => void;
+  onMoveLayer: (id: string, dir: 'forward' | 'backward') => void;
   onEnterBoard: (itemId: string) => void;
 }
 
@@ -33,11 +37,8 @@ export interface CanvasHandle {
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.5;
-
-// Map S/M/L to actual stroke widths.
 const SIZE_TO_PX: Record<SizeKey, number> = { sm: 2, md: 4, lg: 8 };
 
-// Point-in-polygon test for lasso selection.
 function ptInPoly(px: number, py: number, poly: [number, number][]) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -49,17 +50,20 @@ function ptInPoly(px: number, py: number, poly: [number, number][]) {
 
 const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
-    items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
-    onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onEnterBoard,
+    items, strokes, connections, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
+    onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes,
+    onAddConnection, onDeleteConnection, onMoveLayer, onEnterBoard,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
   const [lassoActive, setLassoActive] = useState(false);
+  const [pendingConn, setPendingConn] = useState<{ fromItemId: string; toScreenX: number; toScreenY: number } | null>(null);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
 
   const inDrawMode  = drawOpen && drawTool === 'pencil';
@@ -98,9 +102,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   function onBgPointerDown(e: React.PointerEvent) {
     if (drawOpen && drawTool !== 'select') return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
+    setSelectedConnectionId(null);
 
     if (inSelectMode) {
-      // Start lasso polygon
       e.currentTarget.setPointerCapture(e.pointerId);
       const p = toWorld(e.clientX, e.clientY);
       setLassoPath([[p.x, p.y]]);
@@ -109,7 +113,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       return;
     }
 
-    // Otherwise, pan the canvas (drag mode only).
     if (!interactive) return;
     if (!e.shiftKey) setSelection(new Set());
     setPanning(true);
@@ -141,7 +144,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         });
         setSelection(hits);
       }
-      // Fade out the polygon shortly so it doesn't linger.
       setTimeout(() => setLassoPath([]), 600);
       try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
       return;
@@ -217,15 +219,18 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       if (text) {
         e.preventDefault();
         const pos = centerOfView();
-        const isUrl = /^https?:\/\//i.test(text.trim());
+        const trimmed = text.trim();
+        const isUrl = /^https?:\/\//i.test(trimmed);
+        const isYouTube = isUrl && /(?:youtube\.com|youtu\.be)/i.test(trimmed);
         onAdd({
           id: nanoid(10),
           type: isUrl ? 'link' : 'sticky',
           x: pos.x - 99, y: pos.y - 33,
-          w: isUrl ? 218 : 198,
-          h: isUrl ? 44 : 164,
+          // YouTube embeds get a video-shaped default (16:9-ish).
+          w: isYouTube ? 320 : isUrl ? 218 : 198,
+          h: isYouTube ? 200 : isUrl ? 44 : 164,
           z: 0,
-          data: isUrl ? { url: text.trim(), title: text.trim() } : { text, color: '#FFF3C4' },
+          data: isUrl ? { url: trimmed, title: trimmed } : { text, color: '#FFF3C4' },
         });
       }
     }
@@ -237,19 +242,29 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selection.size) {
-        e.preventDefault();
-        onDeleteMany(Array.from(selection));
-        setSelection(new Set());
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedConnectionId) {
+          e.preventDefault();
+          onDeleteConnection(selectedConnectionId);
+          setSelectedConnectionId(null);
+          return;
+        }
+        if (selection.size) {
+          e.preventDefault();
+          onDeleteMany(Array.from(selection));
+          setSelection(new Set());
+        }
       } else if (e.key === 'Escape') {
         setSelection(new Set());
+        setSelectedConnectionId(null);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selection, onDeleteMany]);
+  }, [selection, selectedConnectionId, onDeleteMany, onDeleteConnection]);
 
   function selectItem(id: string, additive: boolean) {
+    setSelectedConnectionId(null);
     setSelection((prev) => {
       const next = new Set(prev);
       if (additive) {
@@ -263,6 +278,32 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
 
   function moveGroup(ids: string[], dx: number, dy: number) {
     onUpdateMany(ids, { dx, dy });
+  }
+
+  function startConnection(e: React.PointerEvent, fromItemId: string) {
+    setPendingConn({ fromItemId, toScreenX: e.clientX, toScreenY: e.clientY });
+
+    function onMove(ev: PointerEvent) {
+      setPendingConn((p) => (p ? { ...p, toScreenX: ev.clientX, toScreenY: ev.clientY } : null));
+    }
+    function onUp(ev: PointerEvent) {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      const itemEl = el?.closest('[data-item-id]') as HTMLElement | null;
+      const targetId = itemEl?.getAttribute('data-item-id');
+      if (targetId && targetId !== fromItemId) {
+        const exists = connections.some((c) => c.fromItemId === fromItemId && c.toItemId === targetId);
+        if (!exists) {
+          onAddConnection({ id: nanoid(10), fromItemId, toItemId: targetId });
+        }
+      }
+      setPendingConn(null);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }
 
   const cursor =
@@ -279,7 +320,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     <div
       ref={wrapRef}
       className={`absolute inset-0 board-bg no-select ${dragOver ? 'ring-4 ring-inset ring-amber/50' : ''}`}
-      style={{ cursor, top: 46 /* leave room for TopBar */ }}
+      style={{ cursor, top: 46 }}
       onPointerDown={onBgPointerDown}
       onPointerMove={onBgPointerMove}
       onPointerUp={onBgPointerUp}
@@ -307,9 +348,20 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onMoveGroup={moveGroup}
             onDelete={() => onDelete(it.id)}
             onEnterBoard={() => onEnterBoard(it.id)}
+            onConnectionStart={interactive ? startConnection : undefined}
+            onMoveLayer={onMoveLayer}
           />
         ))}
       </div>
+
+      <ConnectionLayer
+        view={view}
+        items={items}
+        connections={connections}
+        pending={pendingConn}
+        selectedConnectionId={selectedConnectionId}
+        onSelectConnection={(id) => { setSelectedConnectionId(id); setSelection(new Set()); }}
+      />
 
       <StrokeLayer
         view={view}
@@ -324,7 +376,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         toWorld={toWorld}
       />
 
-      {/* Lasso polygon (marching ants) */}
       {lassoPath.length > 1 && (
         <svg className="absolute inset-0 w-full h-full pointer-events-none z-30">
           <polygon
@@ -339,7 +390,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         </svg>
       )}
 
-      {/* Bottom-right zoom dock — design styling */}
       <div
         className="absolute bottom-[22px] right-4 z-20 rounded-[13px] border border-ink/10 flex items-center p-1 gap-px"
         style={{

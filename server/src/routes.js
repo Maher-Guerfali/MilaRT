@@ -132,17 +132,19 @@ export function makeRoutes({ uploadDir }) {
       name: board.name,
       items: board.items,
       strokes: board.strokes || [],
+      connections: board.connections || [],
       updatedAt: board.updatedAt,
       breadcrumbs: crumbs,
     });
   });
 
-  // Save a board (full replace of items/strokes + optional name). Autosave target.
+  // Save a board (full replace of items/strokes/connections + optional name).
   r.put('/boards/:id', async (req, res) => {
-    const { items, strokes, name } = req.body || {};
+    const { items, strokes, connections, name } = req.body || {};
     const update = {};
     if (Array.isArray(items)) update.items = items;
     if (Array.isArray(strokes)) update.strokes = strokes;
+    if (Array.isArray(connections)) update.connections = connections;
     if (typeof name === 'string') update.name = name.slice(0, 80);
     const board = await Board.findByIdAndUpdate(req.params.id, update, { new: true });
     if (!board) return res.status(404).json({ error: 'not_found' });
