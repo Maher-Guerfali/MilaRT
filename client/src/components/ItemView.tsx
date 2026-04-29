@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData } from '../types';
 import { api } from '../api';
-import { GripIcon, TrashIcon, BoardIcon, CameraIcon, EnterChevron, LinkIcon, ImageIcon } from './icons';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -19,9 +19,22 @@ interface Props {
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard,
 }: Props) {
-  const dragRef = useRef<{ px: number; py: number; ix: number; iy: number; iw: number; ih: number; mode: 'move' | 'resize' } | null>(null);
+  const dragRef = useRef<{
+    px: number;
+    py: number;
+    ix: number;
+    iy: number;
+    iw: number;
+    ih: number;
+    mode: 'move' | 'resize';
+    moved: boolean;
+  } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const lastDelta = useRef<{ dx: number; dy: number } | null>(null);
+
+  function canDragFrom(target: EventTarget | null) {
+    return !(target as HTMLElement | null)?.closest('button, input, textarea, a, [data-no-item-drag]');
+  }
 
   function startDrag(e: React.PointerEvent, mode: 'move' | 'resize') {
     if (!interactive) return;
@@ -32,6 +45,7 @@ export default function ItemView({
       ix: item.x, iy: item.y,
       iw: item.w, ih: item.h,
       mode,
+      moved: false,
     };
     lastDelta.current = { dx: 0, dy: 0 };
     setGhost({ x: item.x, y: item.y, w: item.w, h: item.h });
@@ -42,6 +56,7 @@ export default function ItemView({
     if (!d) return;
     const dx = (e.clientX - d.px) / scale;
     const dy = (e.clientY - d.py) / scale;
+    if (Math.hypot(e.clientX - d.px, e.clientY - d.py) > 3) d.moved = true;
     if (d.mode === 'move') {
       setGhost({ x: d.ix + dx, y: d.iy + dy, w: d.iw, h: d.ih });
       if (selectionIds.length > 1 && selectionIds.includes(item.id) && lastDelta.current) {
@@ -58,16 +73,26 @@ export default function ItemView({
   }
   function endDrag(e: React.PointerEvent) {
     const d = dragRef.current;
-    if (!d || !ghost) return;
-    if (d.mode === 'move') onUpdate({ x: ghost.x, y: ghost.y });
-    else onUpdate({ w: ghost.w, h: ghost.h });
+    if (!d) return;
+    const finalBox = ghost ?? { x: d.ix, y: d.iy, w: d.iw, h: d.ih };
+    if (d.mode === 'move') onUpdate({ x: finalBox.x, y: finalBox.y });
+    else onUpdate({ w: finalBox.w, h: finalBox.h });
     dragRef.current = null;
     lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (item.type === 'board' && d.mode === 'move' && !d.moved) onEnterBoard();
   }
 
   const pos = ghost ?? item;
+  const controlScale = 1 / scale;
+  const fixedControl = (x: string, y: string): React.CSSProperties => ({
+    left: x,
+    top: y,
+    transform: `scale(${controlScale}) translate(-50%, -50%)`,
+    transformOrigin: 'top left',
+    zIndex: 60,
+  });
 
   return (
     <div
@@ -76,18 +101,26 @@ export default function ItemView({
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
+        zIndex: selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
       }}
-      onPointerDown={(e) => { e.stopPropagation(); onSelect(e.shiftKey); }}
+      onPointerDown={(e) => {
+        if (!canDragFrom(e.target)) return;
+        startDrag(e, 'move');
+      }}
+      onPointerMove={onDrag}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
     >
       {item.type === 'sticky' && <Sticky item={item} selected={selected} onUpdate={onUpdate} />}
       {item.type === 'image'  && <ImageBox item={item} selected={selected} />}
       {item.type === 'link'   && <TextOrLink item={item} selected={selected} onUpdate={onUpdate} />}
-      {item.type === 'board'  && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnter={onEnterBoard} />}
+      {item.type === 'board'  && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} />}
 
-      {/* Drag grip — only visible on hover/select */}
+      {/* Drag grip — fixed screen size even while the canvas is zoomed. */}
       <button
         title="Drag"
-        className={`absolute -top-2 -left-2 w-7 h-7 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        className={`absolute w-7 h-7 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        style={fixedControl('0%', '0%')}
         onPointerDown={(e) => startDrag(e, 'move')}
         onPointerMove={onDrag}
         onPointerUp={endDrag}
@@ -100,15 +133,17 @@ export default function ItemView({
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="absolute -top-2.5 -right-2.5 w-[26px] h-[26px] rounded-full bg-ink text-paper shadow flex items-center justify-center"
+          className="absolute w-[26px] h-[26px] rounded-full bg-ink text-paper shadow flex items-center justify-center"
+          style={fixedControl('100%', '0%')}
           title="Delete"
         ><TrashIcon size={14} /></button>
       )}
 
       <div
-        className={`absolute -bottom-2 -right-2 w-6 h-6 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
+        className={`absolute w-6 h-6 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
           selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         }`}
+        style={fixedControl('100%', '100%')}
         onPointerDown={(e) => startDrag(e, 'resize')}
         onPointerMove={onDrag}
         onPointerUp={endDrag}
@@ -127,21 +162,45 @@ function Sticky({
   item, selected, onUpdate,
 }: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void }) {
   const d = item.data as Partial<StickyData>;
+  const [editing, setEditing] = useState(false);
+  const boxShadow = selected
+    ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)'
+    : '0 2px 10px rgba(26,21,16,0.09)';
+
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        className="w-full h-full resize-none border-0 outline-none p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap transition-shadow"
+        placeholder="Type something..."
+        value={d.text ?? ''}
+        onChange={(e) => onUpdate({ data: { ...d, text: e.target.value } })}
+        onBlur={() => setEditing(false)}
+        onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') (e.currentTarget as HTMLTextAreaElement).blur();
+        }}
+        style={{
+          background: d.color || '#FFF3C4',
+          borderRadius: 16,
+          boxShadow,
+        }}
+      />
+    );
+  }
+
   return (
-    <textarea
-      className="w-full h-full resize-none border-0 outline-none p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap transition-shadow"
-      placeholder="Type something…"
-      value={d.text ?? ''}
-      onChange={(e) => onUpdate({ data: { ...d, text: e.target.value } })}
-      onPointerDown={(e) => e.stopPropagation()}
+    <div
+      className="w-full h-full p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap transition-shadow overflow-hidden cursor-grab active:cursor-grabbing"
+      onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
       style={{
         background: d.color || '#FFF3C4',
         borderRadius: 16,
-        boxShadow: selected
-          ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)'
-          : '0 2px 10px rgba(26,21,16,0.09)',
+        boxShadow,
       }}
-    />
+    >
+      {d.text || <span className="text-ink/45 italic">Type something...</span>}
+    </div>
   );
 }
 
@@ -209,14 +268,9 @@ function TextOrLink({
         onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
       >
         <LinkIcon size={13} />
-        <a
-          href={txt.trim()}
-          target="_blank"
-          rel="noreferrer"
+        <span
           className="text-[12px] text-blue-600 underline overflow-hidden text-ellipsis whitespace-nowrap"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >{txt}</a>
+        >{txt}</span>
       </div>
     );
   }
@@ -237,8 +291,8 @@ function TextOrLink({
 }
 
 function BoardRefBox({
-  item, selected, onUpdate, onEnter,
-}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnter: () => void }) {
+  item, selected, onUpdate,
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
   const [hov, setHov] = useState(false);
@@ -276,22 +330,6 @@ function BoardRefBox({
             <BoardIcon size={30} />
           </div>
         )}
-
-        {/* Faded "Enter →" chip — always visible at 28%, full on hover/select */}
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onEnter(); }}
-          className="absolute bottom-2 right-2 flex items-center gap-1 px-[9px] py-[4px] rounded-full border-0 cursor-pointer text-[10px] font-bold tracking-[0.05em] transition-opacity"
-          style={{
-            background: 'rgba(217,116,53,0.13)',
-            color: '#D97435',
-            opacity: highlight || hov ? 1 : 0.28,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(217,116,53,0.24)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(217,116,53,0.13)'; }}
-        >
-          Enter <EnterChevron size={12} />
-        </button>
 
         {/* Hover-reveal upload thumbnail button */}
         <button

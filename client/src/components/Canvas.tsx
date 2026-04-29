@@ -18,7 +18,6 @@ interface Props {
   penSize: SizeKey;
   eraserSize: SizeKey;
   penOnly: boolean;
-  enteringName: string | null;
   onUpdate: (id: string, patch: Partial<BaseItem>) => void;
   onUpdateMany: (ids: string[], delta: { dx: number; dy: number }) => void;
   onDelete: (id: string) => void;
@@ -51,7 +50,7 @@ function ptInPoly(px: number, py: number, poly: [number, number][]) {
 const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
-    enteringName, onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onEnterBoard,
+    onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onEnterBoard,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -292,7 +291,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       onDrop={onDrop}
     >
       <div
-        className="absolute origin-top-left"
+        className={`absolute origin-top-left ${selection.size ? 'z-20' : ''}`}
         style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
       >
         {items.map((it) => (
@@ -347,31 +346,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
           style={{ background: '#D97435', boxShadow: '0 3px 14px rgba(217,116,53,0.50)' }}
         >
           {selection.size} item{selection.size > 1 ? 's' : ''} selected — switch to Move to drag
-        </div>
-      )}
-
-      {/* Board enter overlay (zoom-fade in) */}
-      {enteringName && (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none animate-canvasIn"
-          style={{ background: '#F3EDE0' }}
-        >
-          <div className="text-center animate-fadeUp" style={{ animationDelay: '0.1s' }}>
-            <div
-              className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white"
-              style={{
-                background: 'linear-gradient(135deg, #D97435, #E8B830)',
-                boxShadow: '0 8px 28px rgba(217,116,53,0.50)',
-              }}
-            >
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-              </svg>
-            </div>
-            <div className="text-[22px] font-extrabold text-ink tracking-tight">{enteringName}</div>
-            <div className="text-[13px] text-ink/50 mt-1.5">Opening board…</div>
-          </div>
         </div>
       )}
 

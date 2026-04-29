@@ -16,11 +16,6 @@ interface Snap {
   name: string;
 }
 
-// Visible board-enter animation duration (ms). Must match the canvasIn
-// keyframes in tailwind.config.js (~480ms) plus a small buffer so the
-// overlay covers the navigation cleanly.
-const ENTER_ANIM_MS = 600;
-
 export default function BoardPage() {
   const { code, boardId } = useParams();
   const nav = useNavigate();
@@ -41,7 +36,6 @@ export default function BoardPage() {
   const [penSize, setPenSize] = useState<SizeKey>('md');
   const [eraserSize, setEraserSize] = useState<SizeKey>('md');
   const [shapeType, setShapeType] = useState<ShapeKey>('rect');
-  const [enteringName, setEnteringName] = useState<string | null>(null);
 
   const [penOnly, setPenOnly] = useState<boolean>(() => {
     try { return localStorage.getItem('milart.penOnly') === '1'; } catch { return false; }
@@ -169,12 +163,7 @@ export default function BoardPage() {
       await api.saveBoard(board._id, updated, strokes, name);
       savedRef.current = JSON.stringify({ items: updated, strokes, name });
     }
-    // Show the zoom-fade overlay for ENTER_ANIM_MS, then navigate.
-    setEnteringName(d.name || 'Untitled');
-    setTimeout(() => {
-      setEnteringName(null);
-      nav(`/r/${code}/b/${bid}`);
-    }, ENTER_ANIM_MS);
+    nav(`/r/${code}/b/${bid}`);
   }
 
   function toggleDraw() {
@@ -236,7 +225,6 @@ export default function BoardPage() {
           penSize={penSize}
           eraserSize={eraserSize}
           penOnly={penOnly}
-          enteringName={enteringName}
           onUpdate={updateItem}
           onUpdateMany={moveItems}
           onDelete={deleteItem}
