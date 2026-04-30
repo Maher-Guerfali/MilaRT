@@ -15,6 +15,12 @@ interface Props {
   toWorld: (clientX: number, clientY: number) => { x: number; y: number };
 }
 
+// Eraser screen-pixel radius for each size (driven by width: sm=2 md=4 lg=8).
+// Maps to a comfortable circular eraser at each scale.
+function eraserScreenRadius(width: number): number {
+  return Math.max(width * 4, 8); // sm→8, md→16, lg→32
+}
+
 // Per-tool render style. Pressure (p) varies along the stroke; for static
 // rendering we use the average so each path renders with one width.
 function styleForStroke(s: Stroke): { strokeWidth: number; opacity: number; dasharray?: string } {
@@ -43,6 +49,8 @@ export default function StrokeLayer({
   const [, force] = useState(0);
   const rerender = () => force((n) => n + 1);
   const drawingRef = useRef(false);
+  // Eraser cursor position in world coordinates (null when pointer not over SVG)
+  const [eraserPos, setEraserPos] = useState<{ wx: number; wy: number } | null>(null);
 
   function strokeToPath(s: Stroke) {
     if (s.points.length < 3) return '';
@@ -53,18 +61,47 @@ export default function StrokeLayer({
     return d;
   }
 
+  // Partial-stroke erasing: split each stroke at points inside the eraser circle.
+  // Only the segments that lie fully outside the circle are kept as new strokes.
   function eraseAt(wx: number, wy: number) {
-    const r = 14 / view.scale;
+    const r = eraserScreenRadius(width) / view.scale;
     const r2 = r * r;
-    const kept = strokes.filter((s) => {
-      for (let i = 0; i < s.points.length; i += 3) {
-        const dx = s.points[i] - wx;
-        const dy = s.points[i + 1] - wy;
-        if (dx * dx + dy * dy < r2) return false;
+    const newStrokes: Stroke[] = [];
+    let changed = false;
+
+    for (const s of strokes) {
+      const numPts = s.points.length / 3;
+      // Classify each point: true = outside eraser circle
+      const outside: boolean[] = [];
+      for (let i = 0; i < numPts; i++) {
+        const dx = s.points[i * 3] - wx;
+        const dy = s.points[i * 3 + 1] - wy;
+        outside.push(dx * dx + dy * dy >= r2);
       }
-      return true;
-    });
-    if (kept.length !== strokes.length) onChange(kept);
+
+      if (outside.every(Boolean)) {
+        // Stroke entirely outside — keep as-is
+        newStrokes.push(s);
+        continue;
+      }
+
+      changed = true;
+      // Split into runs of consecutive outside-circle points
+      let current: number[] = [];
+      for (let i = 0; i < numPts; i++) {
+        if (outside[i]) {
+          current.push(s.points[i * 3], s.points[i * 3 + 1], s.points[i * 3 + 2]);
+        } else {
+          if (current.length >= 3) {
+            newStrokes.push({ ...s, points: current });
+          }
+          current = [];
+        }
+      }
+      if (current.length >= 3) newStrokes.push({ ...s, points: current });
+    }
+
+    if (changed) onChange(newStrokes);
   }
 
   function onDown(e: React.PointerEvent) {
@@ -75,6 +112,7 @@ export default function StrokeLayer({
     const { x, y } = toWorld(e.clientX, e.clientY);
     const p = e.pressure > 0 ? e.pressure : 0.5;
     if (eraser) {
+      setEraserPos({ wx: x, wy: y });
       eraseAt(x, y);
     } else {
       activeRef.current = { color, width, tool: tool as StrokeTool, points: [x, y, p] };
@@ -83,12 +121,14 @@ export default function StrokeLayer({
     try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* ignore */ }
   }
   function onMove(e: React.PointerEvent) {
-    if (!drawMode || !drawingRef.current) return;
+    if (!drawMode) return;
     const { x, y } = toWorld(e.clientX, e.clientY);
     if (eraser) {
-      eraseAt(x, y);
+      setEraserPos({ wx: x, wy: y });
+      if (drawingRef.current) eraseAt(x, y);
       return;
     }
+    if (!drawingRef.current) return;
     const a = activeRef.current;
     if (!a) return;
     const n = a.points.length;
@@ -138,19 +178,39 @@ export default function StrokeLayer({
   }
 
   const active = activeRef.current;
+  // Eraser circle radius in world units (screen radius / scale)
+  const eraserWorldR = eraser ? eraserScreenRadius(width) / view.scale : 0;
 
   return (
     <svg
       className="absolute inset-0 w-full h-full"
-      style={{ pointerEvents: drawMode ? 'auto' : 'none', touchAction: 'none' }}
+      style={{
+        pointerEvents: drawMode ? 'auto' : 'none',
+        touchAction: 'none',
+        cursor: eraser && drawMode ? 'none' : 'crosshair',
+      }}
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={onUp}
+      onPointerLeave={() => setEraserPos(null)}
     >
       <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
         {strokes.map((s, i) => renderStroke(s, i))}
         {active && active.points.length >= 3 && renderStroke(active, 'active')}
+        {/* Eraser circle cursor */}
+        {eraser && drawMode && eraserPos && (
+          <circle
+            cx={eraserPos.wx}
+            cy={eraserPos.wy}
+            r={eraserWorldR}
+            fill="rgba(255,255,255,0.55)"
+            stroke="rgba(26,21,16,0.45)"
+            strokeWidth={1 / view.scale}
+            strokeDasharray={`${3 / view.scale} ${3 / view.scale}`}
+            style={{ pointerEvents: 'none' }}
+          />
+        )}
       </g>
     </svg>
   );

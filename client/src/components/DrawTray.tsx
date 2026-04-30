@@ -57,25 +57,6 @@ export default function DrawTray(props: Props) {
             <ToolBtn active={drawTool === 'pencil'} onClick={() => props.onToolChange('pencil')}>
               <PencilArt active={drawTool === 'pencil'} />
             </ToolBtn>
-            {/* Pencil-only (Apple Pencil / stylus) mode toggle */}
-            <button
-              onClick={() => props.onPenOnlyChange(!penOnly)}
-              title={penOnly ? 'Pencil-only ON — touch ignored' : 'Pencil-only OFF — tap to enable palm rejection'}
-              className="flex flex-col items-center gap-[5px] px-1.5 pt-1 pb-1.5 rounded-xl border-0 cursor-pointer transition-colors self-end mb-[1px]"
-              style={{
-                background: penOnly ? 'rgba(217,116,53,0.12)' : 'transparent',
-              }}
-            >
-              <ApplePencilIcon active={penOnly} />
-              <div
-                className="rounded-full transition-all"
-                style={{
-                  width: penOnly ? 18 : 6,
-                  height: 3,
-                  background: penOnly ? '#D97435' : 'rgba(26,21,16,0.10)',
-                }}
-              />
-            </button>
             <ToolBtn active={drawTool === 'eraser'} onClick={() => props.onToolChange('eraser')}>
               <EraserArt active={drawTool === 'eraser'} />
             </ToolBtn>
@@ -142,6 +123,20 @@ export default function DrawTray(props: Props) {
               </div>
             </>
           )}
+
+          {/* "Only pencil" (palm rejection) pill — far right */}
+          <Divider mx={[14, 10]} />
+          <button
+            onClick={() => props.onPenOnlyChange(!penOnly)}
+            title={penOnly ? 'Apple Pencil only — touch ignored' : 'Tap to enable Apple Pencil / stylus-only mode'}
+            className="flex-shrink-0 px-3 py-[6px] rounded-full border text-[11px] font-semibold transition-all cursor-pointer"
+            style={{
+              background: penOnly ? '#D97435' : 'transparent',
+              color: penOnly ? '#fff' : 'rgba(26,21,16,0.35)',
+              borderColor: penOnly ? '#D97435' : 'rgba(26,21,16,0.18)',
+              boxShadow: penOnly ? '0 0 0 3px rgba(217,116,53,0.22)' : 'none',
+            }}
+          >Only pencil</button>
         </div>
 
         {/* Close */}
@@ -270,18 +265,3 @@ function SelectArt({ active }: { active: boolean }) {
   );
 }
 
-/** Small Apple Pencil icon — indicates stylus-only / palm-rejection mode */
-function ApplePencilIcon({ active }: { active: boolean }) {
-  const clr = active ? '#D97435' : '#BBBBBB';
-  return (
-    <svg width="16" height="32" viewBox="0 0 16 32"
-      style={{ filter: active ? 'drop-shadow(0 1px 4px rgba(217,116,53,0.5))' : 'none', transition: 'filter 0.18s' }}>
-      {/* pencil body */}
-      <rect x="5" y="2" width="6" height="19" rx="3" fill={clr} opacity={active ? 1 : 0.65} />
-      {/* tip */}
-      <polygon points="5,21 11,21 8,28" fill={clr} opacity={active ? 1 : 0.6} />
-      {/* flat cap */}
-      <rect x="5" y="1" width="6" height="3" rx="1.5" fill={clr} opacity={active ? 0.7 : 0.35} />
-    </svg>
-  );
-}

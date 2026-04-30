@@ -43,7 +43,7 @@ interface NavBtnProps {
   onClick: () => void;
 }
 
-function NavBtn({ Icon, label, hint, dragData, onClick: _onClick }: NavBtnProps) {
+function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
   const [hov, setHov] = useState(false);
   const [dragging, setDragging] = useState(false);
   const wasDragged = useRef(false);
@@ -60,19 +60,28 @@ function NavBtn({ Icon, label, hint, dragData, onClick: _onClick }: NavBtnProps)
     setTimeout(() => { wasDragged.current = false; }, 0);
   }
 
+  // Utility buttons (no dragData) are click-only.
+  // Canvas item buttons can also be clicked to place at centre.
+  function handleClick() {
+    if (wasDragged.current) return;
+    onClick();
+  }
+
+  const tooltipLabel = dragData ? `${hint} — drag onto canvas` : hint;
+
   return (
-    <Tooltip label={`${hint} — drag onto canvas`} side="right">
+    <Tooltip label={tooltipLabel} side="right">
       <button
         draggable={!!dragData}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
-        onClick={() => { /* drag-only — no click action */ }}
+        onClick={handleClick}
         onMouseEnter={() => setHov(true)}
         onMouseLeave={() => setHov(false)}
         className={`w-14 flex flex-col items-center justify-center gap-[3px] py-[9px] rounded-[11px] border-0 transition-colors ${
           dragging ? 'opacity-50 scale-95' : hov ? 'bg-ink/10 text-ink' : 'text-ink/50'
         }`}
-        style={{ cursor: dragData ? 'grab' : 'default' }}
+        style={{ cursor: dragData ? 'grab' : 'pointer' }}
       >
         <Icon size={18} />
         <span className="text-[9px] font-semibold uppercase tracking-[0.07em] leading-none">{label}</span>
