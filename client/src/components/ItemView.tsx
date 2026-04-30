@@ -414,7 +414,7 @@ function BoardRefBox({
         className="w-full flex-1 min-h-0 rounded-[18px] flex items-center justify-center relative overflow-hidden transition-all"
         style={{
           background: '#FDFAF5',
-          border: `2px solid ${highlight ? '#D97435' : hov ? 'rgba(26,21,16,0.22)' : 'rgba(26,21,16,0.10)'}`,
+          border: `2px solid ${highlight ? '#D97435' : hov ? 'rgba(26,21,16,0.32)' : 'rgba(26,21,16,0.22)'}`,
           boxShadow: highlight
             ? '0 0 0 3px rgba(217,116,53,0.19)'
             : hov ? '0 4px 18px rgba(26,21,16,0.10)' : '0 2px 8px rgba(26,21,16,0.06)',
