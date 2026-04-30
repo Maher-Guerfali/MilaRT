@@ -84,7 +84,7 @@ export default function CanvasDock({
 
   return (
     <div
-      className="absolute top-[14px] right-[16px] z-20 rounded-2xl border border-ink/10 p-[5px] flex flex-col gap-[2px]"
+      className="absolute top-[58px] right-[16px] z-20 rounded-2xl border border-ink/10 p-[5px] flex flex-col gap-[2px]"
       style={{
         background: 'rgba(253,250,245,0.95)',
         backdropFilter: 'blur(14px)',
