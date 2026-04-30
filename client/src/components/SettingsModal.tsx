@@ -31,7 +31,23 @@ export default function SettingsModal({
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [feedback, setFeedback] = useState('');
+  const [feedbackStatus, setFeedbackStatus] = useState<'idle' | 'sending' | 'sent' | 'err'>('idle');
+
   if (!open) return null;
+
+  async function sendFeedback() {
+    const text = feedback.trim();
+    if (!text) return;
+    setFeedbackStatus('sending');
+    try {
+      await api.sendFeedback(text);
+      setFeedbackStatus('sent');
+      setFeedback('');
+    } catch {
+      setFeedbackStatus('err');
+    }
+  }
 
   function handleExport() {
     const payload: ExportPayload = {
@@ -190,6 +206,33 @@ export default function SettingsModal({
               msg.kind === 'ok' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
             }`}>{msg.text}</div>
           )}
+
+          <section>
+            <div className="text-xs uppercase tracking-wider text-ink/50 mb-2">Feedback</div>
+            <div className="flex flex-col gap-2">
+              <textarea
+                rows={3}
+                placeholder="Share a bug, idea, or anything you'd like…"
+                value={feedback}
+                onChange={(e) => { setFeedback(e.target.value); setFeedbackStatus('idle'); }}
+                className="w-full rounded-md border border-ink/20 bg-paper px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              {feedbackStatus === 'sent' && (
+                <p className="text-xs text-green-700 font-medium">Thanks for your feedback! 🎉</p>
+              )}
+              {feedbackStatus === 'err' && (
+                <p className="text-xs text-red-600">Could not send — please try again.</p>
+              )}
+              <button
+                onClick={sendFeedback}
+                disabled={feedbackStatus === 'sending' || !feedback.trim()}
+                className="self-end px-4 py-1.5 rounded-md text-sm font-semibold text-white transition-all disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #D97435, #F08848)' }}
+              >
+                {feedbackStatus === 'sending' ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </section>
         </div>
       </div>
     </div>

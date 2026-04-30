@@ -47,4 +47,10 @@ export const api = {
     if (!res.ok) throw new Error(`upload failed: ${res.status}`);
     return res.json();
   },
+
+  sendFeedback: (text: string) =>
+    req<{ ok: true }>('/api/feedback', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
 };

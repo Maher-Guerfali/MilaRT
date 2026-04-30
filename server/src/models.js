@@ -52,3 +52,12 @@ const RoomSchema = new Schema(
 
 export const Room = model('Room', RoomSchema);
 export const Board = model('Board', BoardSchema);
+
+const FeedbackSchema = new Schema(
+  {
+    text: { type: String, required: true, maxlength: 4000 },
+  },
+  { timestamps: true }
+);
+
+export const Feedback = model('Feedback', FeedbackSchema);

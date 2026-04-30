@@ -42,7 +42,7 @@ interface NavBtnProps {
   onClick: () => void;
 }
 
-function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
+function NavBtn({ Icon, label, hint, dragData, onClick: _onClick }: NavBtnProps) {
   const [hov, setHov] = useState(false);
   const [dragging, setDragging] = useState(false);
   const wasDragged = useRef(false);
@@ -56,27 +56,22 @@ function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
   }
   function onDragEnd() {
     setDragging(false);
-    // reset after tick so click handler sees the flag
     setTimeout(() => { wasDragged.current = false; }, 0);
-  }
-  function handleClick() {
-    if (wasDragged.current) return; // don't fire click after a drag
-    onClick();
   }
 
   return (
-    <Tooltip label={hint} side="right">
+    <Tooltip label={`${hint} — drag onto canvas`} side="right">
       <button
         draggable={!!dragData}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
-        onClick={handleClick}
+        onClick={() => { /* drag-only — no click action */ }}
         onMouseEnter={() => setHov(true)}
         onMouseLeave={() => setHov(false)}
         className={`w-14 flex flex-col items-center justify-center gap-[3px] py-[9px] rounded-[11px] border-0 transition-colors ${
           dragging ? 'opacity-50 scale-95' : hov ? 'bg-ink/10 text-ink' : 'text-ink/50'
         }`}
-        style={{ cursor: dragData ? 'grab' : 'pointer' }}
+        style={{ cursor: dragData ? 'grab' : 'default' }}
       >
         <Icon size={18} />
         <span className="text-[9px] font-semibold uppercase tracking-[0.07em] leading-none">{label}</span>
@@ -137,10 +132,7 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
       label: 'Image',
       hint: 'Drop or upload image',
       Icon: ImageIcon,
-      action: () => {
-        if (isDrawMode && onActivateMove) onActivateMove();
-        fileRef.current?.click();
-      },
+      action: () => { /* drag only — image upload via drag onto canvas */ },
     },
     {
       label: 'Link',

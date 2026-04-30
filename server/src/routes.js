@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
 import { customAlphabet } from 'nanoid';
-import { Room, Board } from './models.js';
+import { Room, Board, Feedback } from './models.js';
 import { uploadImage as storageUpload, STORAGE_MODE } from './storage.js';
 
 // Fallback random code if the user creates a room without picking a name.
@@ -168,6 +168,15 @@ export function makeRoutes({ uploadDir }) {
       console.error('[upload] failed:', err);
       res.status(500).json({ error: 'upload_failed', detail: err.message });
     }
+  });
+
+  // Save user feedback text into the database.
+  r.post('/feedback', async (req, res) => {
+    const text = (req.body?.text || '').toString().trim().slice(0, 4000);
+    if (!text) return res.status(400).json({ error: 'empty_feedback' });
+    await Feedback.create({ text });
+    console.log(`[feedback] saved (${text.length} chars)`);
+    res.json({ ok: true });
   });
 
   return r;

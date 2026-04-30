@@ -8,6 +8,7 @@ import TopBar from '../components/TopBar';
 import CanvasDock from '../components/CanvasDock';
 import DrawTray, { type DrawTool, type SizeKey } from '../components/DrawTray';
 import SettingsModal from '../components/SettingsModal';
+import TutorialModal from '../components/TutorialModal';
 import { useHistory } from '../hooks/useHistory';
 
 interface Snap {
@@ -45,6 +46,7 @@ export default function BoardPage() {
   }
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
   const canvasRef = useRef<CanvasHandle>(null);
 
   const snap = useMemo<Snap>(
@@ -101,6 +103,15 @@ export default function BoardPage() {
   }, [code, boardId, nav]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Show tutorial on very first visit
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem('milart.tutorialSeen')) {
+        setTutorialOpen(true);
+      }
+    } catch { /* storage blocked */ }
+  }, []);
 
   const savedRef = useRef<string>('');
   useEffect(() => {
@@ -218,6 +229,12 @@ export default function BoardPage() {
 
   return (
     <div className="h-full w-full flex" style={{ background: '#F3EDE0' }}>
+      {tutorialOpen && (
+        <TutorialModal onClose={() => {
+          setTutorialOpen(false);
+          try { localStorage.setItem('milart.tutorialSeen', '1'); } catch { /* ignore */ }
+        }} />
+      )}
       <Sidebar
         roomCode={code!}
         onAdd={addItemAtCenter}
