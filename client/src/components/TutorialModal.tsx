@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 
 interface Props {
   onClose: () => void;
@@ -27,28 +27,44 @@ const STEPS = [
   },
 ];
 
-// Fade duration in ms — keep in sync with CSS transition below
-const FADE_MS = 200;
+const FADE_MS = 280;
 
 export default function TutorialModal({ onClose }: Props) {
-  // `step` drives the dots immediately; `visibleStep` drives the illustration with a delay
   const [step, setStep] = useState(0);
-  const [visibleStep, setVisibleStep] = useState(0);
-  const [imgOpacity, setImgOpacity] = useState(1);
+  // outgoing = the illustration being faded out; incoming = the one fading in
+  const [outgoing, setOutgoing] = useState<number | null>(null);
+  const [incoming, setIncoming] = useState(0);
+  const [incomingOpacity, setIncomingOpacity] = useState(1);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const total = STEPS.length;
   const isLast = step === total - 1;
-  const { title, text, Illustration } = STEPS[visibleStep];
+  const { title, text } = STEPS[step];
+  const OutIllus = outgoing !== null ? STEPS[outgoing].Illustration : null;
+  const InIllus = STEPS[incoming].Illustration;
 
   function goTo(next: number) {
-    if (next < 0 || next > total - 1) return;
+    if (next < 0 || next >= total) return;
+    if (timerRef.current) clearTimeout(timerRef.current);
+
+    const current = step;
     setStep(next);
-    // Fade out illustration, swap content, fade back in
-    setImgOpacity(0);
-    setTimeout(() => {
-      setVisibleStep(next);
-      setImgOpacity(1);
-    }, FADE_MS);
+    // Stack: outgoing stays visible at opacity 1, incoming starts at 0 then fades to 1
+    setOutgoing(current);
+    setIncoming(next);
+    setIncomingOpacity(0);
+
+    // Tiny tick so the browser paints opacity:0 first, then we trigger the transition
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setIncomingOpacity(1);
+      });
+    });
+
+    // After the crossfade completes, remove the outgoing layer
+    timerRef.current = setTimeout(() => {
+      setOutgoing(null);
+    }, FADE_MS + 40);
   }
 
   function handleNext() {
@@ -62,7 +78,6 @@ export default function TutorialModal({ onClose }: Props) {
       className="fixed inset-0 z-[60] flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.5)' }}
     >
-      {/* Fixed-size card — never scales with viewport */}
       <div style={{
         width: 420,
         background: '#FDFAF5',
@@ -72,17 +87,31 @@ export default function TutorialModal({ onClose }: Props) {
         flexShrink: 0,
       }}>
 
-        {/* Illustration — dissolves between steps */}
+        {/* Illustration — cross-dissolve crossfade */}
         <div style={{
           height: 220,
           background: 'linear-gradient(135deg, #FFF3E0, #FDE8C8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          opacity: imgOpacity,
-          transition: `opacity ${FADE_MS}ms ease`,
+          position: 'relative',
         }}>
-          <Illustration />
+          {/* Outgoing layer — stays at opacity 1 underneath */}
+          {OutIllus && (
+            <div style={{
+              position: 'absolute', inset: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              opacity: 1,
+            }}>
+              <OutIllus />
+            </div>
+          )}
+          {/* Incoming layer — fades in on top */}
+          <div style={{
+            position: 'absolute', inset: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            opacity: incomingOpacity,
+            transition: `opacity ${FADE_MS}ms ease`,
+          }}>
+            <InIllus />
+          </div>
         </div>
 
         {/* Content */}
