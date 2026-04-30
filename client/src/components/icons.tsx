@@ -36,15 +36,15 @@ export const EnterChevron = wrap(<path d="m9 18 6-6-6-6" strokeWidth={2.2} />);
 
 export const UndoIcon = wrap(
   <>
-    <path d="M3 7v6h6" />
-    <path d="M3 13C5 7 10 3 16 3a9 9 0 0 1 0 18c-4 0-7.5-2-9-5" />
+    <polyline points="9 14 4 9 9 4" />
+    <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
   </>
 );
 
 export const RedoIcon = wrap(
   <>
-    <path d="M21 7v6h-6" />
-    <path d="M21 13c-2-6-7-10-13-10a9 9 0 0 0 0 18c4 0 7.5-2 9-5" />
+    <polyline points="15 14 20 9 15 4" />
+    <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
   </>
 );
 
