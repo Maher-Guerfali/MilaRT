@@ -1,9 +1,11 @@
+import { useRef } from 'react';
 import type { BaseItem } from '../types';
 
 interface Props {
   items: BaseItem[];
   view: { x: number; y: number; scale: number };
   canvasSize: { w: number; h: number };
+  onNavigate: (worldX: number, worldY: number) => void;
 }
 
 const MAP_PX = 140;
@@ -15,12 +17,10 @@ const ITEM_TYPE_COLOR: Record<string, string> = {
   board:  '#D97435',
 };
 
-// Square overview pinned above the zoom dock. Always visible (so the user
-// can orient themselves). Items render as thin rounded rects coloured by
-// type; the current viewport is outlined in amber. Read-only for now.
-export default function MiniMap({ items, view, canvasSize }: Props) {
-  // Compute the world bounds we want to fit. Include the current viewport
-  // so the orange outline always has somewhere to sit even with no items.
+export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const draggingRef = useRef(false);
+
   const visW = canvasSize.w / view.scale;
   const visH = canvasSize.h / view.scale;
   const visX = -view.x / view.scale;
@@ -33,44 +33,76 @@ export default function MiniMap({ items, view, canvasSize }: Props) {
     if (it.x + it.w > maxX) maxX = it.x + it.w;
     if (it.y + it.h > maxY) maxY = it.y + it.h;
   }
-  // Pad the world bounds a touch so things don't kiss the edge.
   const pad = 40;
   minX -= pad; minY -= pad; maxX += pad; maxY += pad;
 
   const worldW = Math.max(1, maxX - minX);
   const worldH = Math.max(1, maxY - minY);
   const inner = MAP_PX - MAP_PADDING * 2;
-  // Letterbox: scale by the dominant axis so aspect is preserved.
-  const scale = Math.min(inner / worldW, inner / worldH);
-  // Centre the content within the square.
-  const offX = (MAP_PX - worldW * scale) / 2;
-  const offY = (MAP_PX - worldH * scale) / 2;
+  const mapScale = Math.min(inner / worldW, inner / worldH);
+  const offX = (MAP_PX - worldW * mapScale) / 2;
+  const offY = (MAP_PX - worldH * mapScale) / 2;
 
   const project = (wx: number, wy: number) => ({
-    x: offX + (wx - minX) * scale,
-    y: offY + (wy - minY) * scale,
+    x: offX + (wx - minX) * mapScale,
+    y: offY + (wy - minY) * mapScale,
   });
 
+  // Convert a click position (relative to the SVG element) to world coords,
+  // then call onNavigate so the canvas centres on that world point.
+  function handleMapPoint(svgX: number, svgY: number) {
+    const wx = (svgX - offX) / mapScale + minX;
+    const wy = (svgY - offY) / mapScale + minY;
+    onNavigate(wx, wy);
+  }
+
+  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+    draggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = svgRef.current!.getBoundingClientRect();
+    handleMapPoint(e.clientX - rect.left, e.clientY - rect.top);
+  }
+  function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+    if (!draggingRef.current) return;
+    const rect = svgRef.current!.getBoundingClientRect();
+    handleMapPoint(e.clientX - rect.left, e.clientY - rect.top);
+  }
+  function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
+    draggingRef.current = false;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+
   const v = project(visX, visY);
-  const vw = visW * scale;
-  const vh = visH * scale;
+  const vw = visW * mapScale;
+  const vh = visH * mapScale;
 
   return (
     <div
-      className="absolute right-4 z-20 rounded-2xl border border-ink/10 overflow-hidden pointer-events-none"
+      className="absolute right-4 z-20 rounded-2xl border border-ink/10 overflow-hidden"
       style={{
-        bottom: 64, // sits just above the zoom dock (which is at bottom: 22)
+        bottom: 64,
         width: MAP_PX,
         height: MAP_PX,
         background: 'rgba(253,250,245,0.96)',
         backdropFilter: 'blur(14px)',
         boxShadow: '0 4px 18px rgba(26,21,16,0.10)',
+        cursor: 'crosshair',
       }}
     >
-      <div className="absolute top-1.5 left-2 text-[9px] font-bold uppercase tracking-[0.08em] text-ink/40">
+      <div className="absolute top-1.5 left-2 text-[9px] font-bold uppercase tracking-[0.08em] text-ink/40 pointer-events-none">
         Map
       </div>
-      <svg width={MAP_PX} height={MAP_PX} viewBox={`0 0 ${MAP_PX} ${MAP_PX}`}>
+      <svg
+        ref={svgRef}
+        width={MAP_PX}
+        height={MAP_PX}
+        viewBox={`0 0 ${MAP_PX} ${MAP_PX}`}
+        style={{ display: 'block', touchAction: 'none' }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
         {items.map((it) => {
           const p = project(it.x, it.y);
           return (
@@ -78,8 +110,8 @@ export default function MiniMap({ items, view, canvasSize }: Props) {
               key={it.id}
               x={p.x}
               y={p.y}
-              width={Math.max(2, it.w * scale)}
-              height={Math.max(2, it.h * scale)}
+              width={Math.max(2, it.w * mapScale)}
+              height={Math.max(2, it.h * mapScale)}
               rx={1.5}
               fill={ITEM_TYPE_COLOR[it.type] || '#888'}
               opacity={0.55}

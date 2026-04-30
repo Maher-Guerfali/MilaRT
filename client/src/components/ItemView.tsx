@@ -67,6 +67,14 @@ export default function ItemView({
     if (!interactive) return;
     e.stopPropagation();
     const wasSelected = selected;
+
+    // If the item isn't selected yet, just select it — don't start a drag.
+    // The user can then press a second time (while selected) to drag.
+    if (!wasSelected && mode === 'move') {
+      onSelect(e.shiftKey);
+      return;
+    }
+
     if (!wasSelected || mode === 'resize') onSelect(e.shiftKey);
     dragRef.current = {
       px: e.clientX, py: e.clientY,

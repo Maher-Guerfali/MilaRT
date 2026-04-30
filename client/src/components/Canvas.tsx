@@ -61,6 +61,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
   const [lassoActive, setLassoActive] = useState(false);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
+  // Pinch-to-zoom: track the two active pointer positions.
+  const pinchRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartRef = useRef<{ dist: number; scale: number; cx: number; cy: number } | null>(null);
 
   const inDrawMode  = drawOpen && drawTool === 'pencil';
   const inEraseMode = drawOpen && drawTool === 'eraser';
@@ -110,8 +113,23 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   function resetView() { setView({ x: 0, y: 0, scale: 1 }); }
 
   function onBgPointerDown(e: React.PointerEvent) {
+    // Track all touch/pointer contacts for pinch detection.
+    pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
     if (drawOpen && drawTool !== 'select') return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
+
+    // Two-finger pinch detected — stop panning, start pinch.
+    if (pinchRef.current.size === 2) {
+      setPanning(false);
+      panStart.current = null;
+      const pts = Array.from(pinchRef.current.values());
+      const cx = (pts[0].x + pts[1].x) / 2;
+      const cy = (pts[0].y + pts[1].y) / 2;
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      pinchStartRef.current = { dist, scale: view.scale, cx, cy };
+      return;
+    }
 
     if (inSelectMode) {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -130,6 +148,21 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   }
 
   function onBgPointerMove(e: React.PointerEvent) {
+    // Update tracked position.
+    if (pinchRef.current.has(e.pointerId)) {
+      pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    // Active pinch — two fingers.
+    if (pinchRef.current.size === 2 && pinchStartRef.current) {
+      const pts = Array.from(pinchRef.current.values());
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      const { dist: startDist, scale: startScale, cx, cy } = pinchStartRef.current;
+      const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, startScale * (dist / startDist)));
+      zoomAround(cx, cy, nextScale);
+      return;
+    }
+
     if (lassoActive) {
       const p = toWorld(e.clientX, e.clientY);
       setLassoPath((prev) => [...prev, [p.x, p.y]]);
@@ -141,6 +174,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   }
 
   function onBgPointerUp(e: React.PointerEvent) {
+    pinchRef.current.delete(e.pointerId);
+    if (pinchRef.current.size < 2) pinchStartRef.current = null;
+
     if (lassoActive) {
       setLassoActive(false);
       const poly = lassoPath;
@@ -309,7 +345,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     <div
       ref={wrapRef}
       className={`absolute inset-0 board-bg no-select ${dragOver ? 'ring-4 ring-inset ring-amber/50' : ''}`}
-      style={{ cursor, top: 46 }}
+      style={{ cursor, top: 46, touchAction: 'none' }}
       onPointerDown={onBgPointerDown}
       onPointerMove={onBgPointerMove}
       onPointerUp={onBgPointerUp}
@@ -371,7 +407,19 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       )}
 
       {/* Mini-map sits above the zoom dock in the bottom-right. */}
-      <MiniMap items={items} view={view} canvasSize={size} />
+      <MiniMap
+        items={items}
+        view={view}
+        canvasSize={size}
+        onNavigate={(wx, wy) => {
+          // Centre the canvas view on the clicked world position.
+          setView((v) => ({
+            ...v,
+            x: size.w / 2 - wx * v.scale,
+            y: size.h / 2 - wy * v.scale,
+          }));
+        }}
+      />
 
       <div
         className="absolute bottom-[22px] right-4 z-20 rounded-[13px] border border-ink/10 flex items-center p-1 gap-px"
