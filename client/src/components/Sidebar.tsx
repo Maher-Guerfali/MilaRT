@@ -15,6 +15,7 @@ interface Props {
   onAdd: (template: ItemTemplate) => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
+  onOpenTutorial: () => void;
   saving: 'idle' | 'saving' | 'saved' | 'error';
   isDrawMode?: boolean;
   onActivateMove?: () => void;
@@ -80,7 +81,7 @@ function NavBtn({ Icon, label, hint, dragData, onClick: _onClick }: NavBtnProps)
   );
 }
 
-export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, saving, isDrawMode, onActivateMove }: Props) {
+export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, onOpenTutorial, isDrawMode, onActivateMove }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   function addItem(tmpl: ItemTemplate) {
@@ -158,11 +159,6 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
     }
   }
 
-  const saveDot =
-    saving === 'saved' ? '#5cb85c' :
-    saving === 'error' ? '#e74c3c' :
-    '#D97435';
-
   return (
     <aside className="w-14 shrink-0 h-full flex flex-col bg-paper border-r border-ink/10 items-center z-10">
       {/* Logo */}
@@ -196,17 +192,10 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
 
       <div className="flex-1" />
 
-      {/* Save dot + utility buttons */}
+      {/* Utility buttons */}
       <div className="flex flex-col gap-px py-2.5 border-t border-ink/10 w-full items-center">
-        {saving !== 'idle' && (
-          <div className="mb-1 flex justify-center">
-            <span
-              className={`w-[7px] h-[7px] rounded-full ${saving === 'saving' ? 'animate-pulse' : ''}`}
-              style={{ background: saveDot }}
-            />
-          </div>
-        )}
         <NavBtn Icon={RefreshIconLocal} label="Refresh" hint="Reload from server" onClick={onRefresh} />
+        <NavBtn Icon={HelpIconLocal} label="Help" hint="Show tutorial" onClick={onOpenTutorial} />
         <NavBtn Icon={SettingsIcon} label="Settings" hint="Settings" onClick={onOpenSettings} />
       </div>
     </aside>
@@ -222,6 +211,18 @@ function RefreshIconLocal({ size = 18 }: { size?: number }) {
       <path d="M21 3v5h-5" />
       <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
       <path d="M3 21v-5h5" />
+    </svg>
+  );
+}
+
+// Help / tutorial icon — a circled exclamation mark.
+function HelpIconLocal({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
     </svg>
   );
 }

@@ -56,18 +56,22 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
     onNavigate(wx, wy);
   }
 
-  function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
+  // Only the orange viewport rect is interactive — pointer events on the
+  // background map are intentionally disabled so regular mouse movement
+  // over the map doesn't produce a cursor change or accidental navigations.
+  function onRectPointerDown(e: React.PointerEvent<SVGRectElement>) {
+    e.stopPropagation();
     draggingRef.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
     const rect = svgRef.current!.getBoundingClientRect();
     handleMapPoint(e.clientX - rect.left, e.clientY - rect.top);
   }
-  function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
+  function onRectPointerMove(e: React.PointerEvent<SVGRectElement>) {
     if (!draggingRef.current) return;
     const rect = svgRef.current!.getBoundingClientRect();
     handleMapPoint(e.clientX - rect.left, e.clientY - rect.top);
   }
-  function onPointerUp(e: React.PointerEvent<SVGSVGElement>) {
+  function onRectPointerUp(e: React.PointerEvent<SVGRectElement>) {
     draggingRef.current = false;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
@@ -86,7 +90,6 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
         background: 'rgba(253,250,245,0.96)',
         backdropFilter: 'blur(14px)',
         boxShadow: '0 4px 18px rgba(26,21,16,0.10)',
-        cursor: 'crosshair',
       }}
     >
       <div className="absolute top-1.5 left-2 text-[9px] font-bold uppercase tracking-[0.08em] text-ink/40 pointer-events-none">
@@ -98,10 +101,6 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
         height={MAP_PX}
         viewBox={`0 0 ${MAP_PX} ${MAP_PX}`}
         style={{ display: 'block', touchAction: 'none' }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
       >
         {items.map((it) => {
           const p = project(it.x, it.y);
@@ -118,7 +117,7 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
             />
           );
         })}
-        {/* Current viewport — amber outline. */}
+        {/* Current viewport — draggable amber rect. */}
         <rect
           x={v.x}
           y={v.y}
@@ -128,6 +127,11 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
           stroke="#D97435"
           strokeWidth={1.5}
           rx={2}
+          style={{ cursor: draggingRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+          onPointerDown={onRectPointerDown}
+          onPointerMove={onRectPointerMove}
+          onPointerUp={onRectPointerUp}
+          onPointerCancel={onRectPointerUp}
         />
       </svg>
     </div>

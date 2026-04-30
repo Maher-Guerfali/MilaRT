@@ -240,6 +240,7 @@ export default function BoardPage() {
         onAdd={addItemAtCenter}
         onRefresh={load}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenTutorial={() => setTutorialOpen(true)}
         saving={saving}
         isDrawMode={!isMove && drawOpen}
         onActivateMove={activateMove}

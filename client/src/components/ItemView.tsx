@@ -167,7 +167,7 @@ export default function ItemView({
       {item.type === 'link' && (
         <TextOrLink item={item} selected={selected} editing={editing} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
-      {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} />}
+      {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
 
       {/* Drag grip — fixed screen size even while the canvas is zoomed. */}
       <button
@@ -388,8 +388,8 @@ function TextOrLink({
 }
 
 function BoardRefBox({
-  item, selected, onUpdate,
-}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void }) {
+  item, selected, onUpdate, onEnterBoard,
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
   const [hov, setHov] = useState(false);
@@ -426,6 +426,17 @@ function BoardRefBox({
           <div className="text-ink/50">
             <BoardIcon size={30} />
           </div>
+        )}
+
+        {/* Enter-board arrow — visible only when selected */}
+        {selected && (
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onEnterBoard(); }}
+            title="Open board"
+            className="absolute bottom-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-white text-[13px] shadow-md z-10"
+            style={{ background: '#D97435', lineHeight: 1 }}
+          >→</button>
         )}
 
         <div
