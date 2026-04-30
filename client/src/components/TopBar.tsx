@@ -24,7 +24,7 @@ export default function TopBar({ roomCode, crumbs, currentName, saving, onRename
 
   return (
     <div
-      className="absolute top-0 left-0 right-0 h-[46px] z-[15] flex items-center gap-2 px-4 border-b border-ink/10"
+      className="absolute top-0 left-0 right-0 h-[46px] z-[50] flex items-center gap-2 px-4 border-b border-ink/10"
       style={{ background: 'rgba(253,250,245,0.90)', backdropFilter: 'blur(14px)' }}
     >
       <span className="text-[12px] text-ink/50 font-medium">{roomCode}</span>
