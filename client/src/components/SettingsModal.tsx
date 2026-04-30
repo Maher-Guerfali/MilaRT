@@ -421,28 +421,6 @@ export default function SettingsModal({
                 <LogoutIcon size={16} />
                 <span>Leave room (back to home)</span>
               </button>
-              <button
-                onClick={async () => {
-                  const ok = window.confirm(
-                    `Delete room "${roomCode}"?\n\nThis permanently removes the room and every board, item, and stroke in it. This cannot be undone.`
-                  );
-                  if (!ok) return;
-                  setBusy(true);
-                  try {
-                    await api.deleteRoom(roomCode);
-                    onClose();
-                    nav('/');
-                  } catch (e) {
-                    setMsg({ kind: 'err', text: 'Could not delete: ' + (e as Error).message });
-                    setBusy(false);
-                  }
-                }}
-                disabled={busy}
-                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-red-300 text-red-700 hover:bg-red-600 hover:text-white hover:border-red-600 disabled:opacity-50"
-              >
-                <TrashIcon size={16} />
-                <span>Delete this room (everyone loses it)</span>
-              </button>
             </div>
           </section>
 
