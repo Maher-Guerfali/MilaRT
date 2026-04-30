@@ -257,6 +257,10 @@ export default function BoardPage() {
           setName(p.name);
           setSettingsOpen(false);
         }}
+        onRoomImportSuccess={(rootBoardId) => {
+          setSettingsOpen(false);
+          nav(`/r/${code}/b/${rootBoardId}`);
+        }}
       />
 
       <div className="flex-1 relative overflow-hidden">

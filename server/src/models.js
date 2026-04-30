@@ -25,6 +25,7 @@ const StrokeSchema = new Schema(
   {
     color: { type: String, default: '#1b1b1b' },
     width: { type: Number, default: 2 },
+    tool: { type: String, enum: ['pen', 'fountain', 'pencil', 'marker', 'brush'], default: 'pen' },
     points: { type: [Number], default: [] },
   },
   { _id: false }

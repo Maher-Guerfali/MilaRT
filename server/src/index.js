@@ -27,7 +27,8 @@ console.log('[boot] CLIENT_INDEX =', CLIENT_INDEX, fs.existsSync(CLIENT_INDEX) ?
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+// Generous limit: portable exports embed images as base64 (can be 30–50 MB).
+app.use(express.json({ limit: '60mb' }));
 
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use('/api', makeRoutes({ uploadDir: UPLOAD_DIR }));

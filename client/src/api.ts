@@ -1,4 +1,4 @@
-import type { Board, Room, BaseItem, Stroke } from './types';
+import type { Board, Room, BaseItem, Stroke, RoomExportV2 } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -53,4 +53,51 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+
+  // ── Export / Import ────────────────────────────────────────────────
+
+  /** Fetch full room snapshot from server (no embedded images — client embeds them). */
+  exportRoom: (code: string) =>
+    req<RoomExportV2>(`/api/rooms/${encodeURIComponent(code)}/export`),
+
+  /** Replace all boards in a room with a v2 snapshot (images may be base64 — server re-uploads). */
+  importRoom: (code: string, payload: RoomExportV2) =>
+    req<{ ok: true; rootBoardId: string; boardCount: number }>(
+      `/api/rooms/${encodeURIComponent(code)}/import`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+
+  // ── Per-item AI / MCP endpoints ────────────────────────────────────
+
+  /** Add a single item to a board. */
+  addItem: (boardId: string, item: BaseItem) =>
+    req<{ ok: true; item: BaseItem }>(`/api/boards/${boardId}/items`, {
+      method: 'POST',
+      body: JSON.stringify(item),
+    }),
+
+  /** Partially update one item (top-level fields + deep-merge data). */
+  updateItem: (boardId: string, itemId: string, patch: Partial<BaseItem>) =>
+    req<{ ok: true; item: BaseItem }>(
+      `/api/boards/${boardId}/items/${encodeURIComponent(itemId)}`,
+      { method: 'PATCH', body: JSON.stringify(patch) },
+    ),
+
+  /** Remove one item from a board. */
+  deleteItem: (boardId: string, itemId: string) =>
+    req<{ ok: true }>(
+      `/api/boards/${boardId}/items/${encodeURIComponent(itemId)}`,
+      { method: 'DELETE' },
+    ),
+
+  /** Append one or more strokes to a board. */
+  addStrokes: (boardId: string, strokes: Stroke[]) =>
+    req<{ ok: true; strokeCount: number }>(`/api/boards/${boardId}/strokes`, {
+      method: 'POST',
+      body: JSON.stringify({ strokes }),
+    }),
+
+  /** Clear all strokes on a board. */
+  clearStrokes: (boardId: string) =>
+    req<{ ok: true }>(`/api/boards/${boardId}/strokes`, { method: 'DELETE' }),
 };

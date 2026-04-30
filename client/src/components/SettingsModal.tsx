@@ -1,17 +1,111 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { BaseItem, Stroke } from '../types';
+import type { BaseItem, Stroke, BoardExportV2, RoomExportV2, BoardSnapshot } from '../types';
 import { api } from '../api';
 import { CloseIcon, DownloadIcon, UploadIcon, LogoutIcon, TrashIcon } from './icons';
 
-interface ExportPayload {
-  version: 1;
-  type: 'milart-board';
-  exportedAt: string;
-  name: string;
-  items: BaseItem[];
-  strokes: Stroke[];
+// ── image-embedding helpers (module-level, no React deps) ─────────────
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
+
+/**
+ * Walk an items array and replace every image item's url with a base64
+ * data: URL so the file is fully self-contained.  Falls back to the
+ * original URL if fetch fails (CORS, network error, etc.).
+ * Returns { items, embedded, kept } — 'kept' counts fallbacks.
+ */
+async function embedImages(
+  items: BaseItem[],
+  onProgress: (done: number, total: number) => void,
+): Promise<{ items: BaseItem[]; embedded: number; kept: number }> {
+  const imageItems = items.filter(it => it.type === 'image');
+  if (!imageItems.length) return { items, embedded: 0, kept: 0 };
+
+  let done = 0;
+  let embedded = 0;
+  let kept = 0;
+
+  const result = await Promise.all(
+    items.map(async (item) => {
+      if (item.type !== 'image') return item;
+      const url = (item.data as { url: string }).url;
+      if (!url || url.startsWith('data:')) {
+        done++; embedded++;
+        onProgress(done, imageItems.length);
+        return item;
+      }
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const dataUrl = await blobToDataUrl(await resp.blob());
+        done++; embedded++;
+        onProgress(done, imageItems.length);
+        return { ...item, data: { ...(item.data as object), url: dataUrl, _originalUrl: url } };
+      } catch {
+        done++; kept++;
+        onProgress(done, imageItems.length);
+        return item; // keep original URL as fallback
+      }
+    }),
+  );
+  return { items: result, embedded, kept };
+}
+
+/**
+ * For each image item whose url is a base64 data: URL, upload it to the
+ * server via /api/upload and replace with the server URL.
+ */
+async function reuploadImages(
+  items: BaseItem[],
+  onProgress: (done: number, total: number) => void,
+): Promise<BaseItem[]> {
+  const dataItems = items.filter(
+    it => it.type === 'image' && (it.data as { url: string }).url?.startsWith('data:'),
+  );
+  if (!dataItems.length) return items;
+
+  let done = 0;
+  return Promise.all(
+    items.map(async (item) => {
+      if (item.type !== 'image') return item;
+      const url = (item.data as { url: string }).url;
+      if (!url?.startsWith('data:')) return item;
+      try {
+        const blob = await (await fetch(url)).blob();
+        const { url: serverUrl } = await api.uploadImage(blob);
+        done++;
+        onProgress(done, dataItems.length);
+        return { ...item, data: { ...(item.data as object), url: serverUrl } };
+      } catch {
+        done++;
+        onProgress(done, dataItems.length);
+        return item; // keep data URL as last resort
+      }
+    }),
+  );
+}
+
+function downloadJson(payload: unknown, baseName: string) {
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${baseName.replace(/[^a-z0-9-_]+/gi, '_').slice(0, 40)}-${Date.now()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── component ─────────────────────────────────────────────────────────
 
 interface Props {
   open: boolean;
@@ -21,15 +115,18 @@ interface Props {
   strokes: Stroke[];
   onClose: () => void;
   onImport: (payload: { name: string; items: BaseItem[]; strokes: Stroke[] }) => void;
+  onRoomImportSuccess: (rootBoardId: string) => void;
 }
 
 export default function SettingsModal({
-  open, roomCode, boardName, items, strokes, onClose, onImport,
+  open, roomCode, boardName, items, strokes, onClose, onImport, onRoomImportSuccess,
 }: Props) {
   const nav = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [opLabel, setOpLabel] = useState('');
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const [feedback, setFeedback] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState<'idle' | 'sending' | 'sent' | 'err'>('idle');
@@ -49,48 +146,164 @@ export default function SettingsModal({
     }
   }
 
-  function handleExport() {
-    const payload: ExportPayload = {
-      version: 1,
-      type: 'milart-board',
-      exportedAt: new Date().toISOString(),
-      name: boardName,
-      items,
-      strokes,
-    };
-    const json = JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const safeName = (boardName || 'board').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 40);
-    a.href = url;
-    a.download = `mboard-${safeName}-${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setMsg({ kind: 'ok', text: 'Exported.' });
-  }
-
-  async function handleImportFile(file: File) {
+  // ── Export: current board (v2, images embedded as base64) ────────────
+  async function handleExportBoard() {
+    setBusy(true);
+    setMsg(null);
+    setOpLabel('Embedding images…');
+    setProgress({ done: 0, total: items.filter(it => it.type === 'image').length });
     try {
-      const text = await file.text();
-      const data = JSON.parse(text) as Partial<ExportPayload>;
-      if (data.type !== 'milart-board' || !Array.isArray(data.items)) {
-        throw new Error('That file does not look like an M-Board export.');
-      }
-      const ok = window.confirm(
-        `Import "${data.name || 'board'}"?\n\nThis will replace the current board's contents (${items.length} items, ${strokes.length} strokes).`
-      );
-      if (!ok) return;
-      onImport({
-        name: typeof data.name === 'string' ? data.name : boardName,
-        items: data.items as BaseItem[],
-        strokes: Array.isArray(data.strokes) ? (data.strokes as Stroke[]) : [],
+      const { items: embedded, embedded: ok, kept } = await embedImages(items, (done, total) => {
+        setProgress({ done, total });
       });
-      setMsg({ kind: 'ok', text: 'Imported. Note: image cards still point to their original URLs and may not load if the source server is gone.' });
+      const payload: BoardExportV2 = {
+        $schema: 'milart/v2',
+        version: 2,
+        type: 'milart-board',
+        exportedAt: new Date().toISOString(),
+        name: boardName,
+        items: embedded,
+        strokes,
+      };
+      downloadJson(payload, `board-${boardName}`);
+      const note = kept > 0 ? ` (${kept} image URL${kept !== 1 ? 's' : ''} could not be embedded — check CORS)` : '';
+      setMsg({ kind: 'ok', text: `Board exported. ${ok} image${ok !== 1 ? 's' : ''} embedded${note}.` });
     } catch (err) {
       setMsg({ kind: 'err', text: (err as Error).message });
+    } finally {
+      setBusy(false);
+      setProgress(null);
+      setOpLabel('');
+    }
+  }
+
+  // ── Export: full room — all boards, all images embedded ──────────────
+  async function handleExportRoom() {
+    setBusy(true);
+    setMsg(null);
+    setOpLabel('Fetching all boards…');
+    setProgress(null);
+    try {
+      const roomData = await api.exportRoom(roomCode);
+      const totalImages = roomData.boards.reduce(
+        (sum, b) => sum + b.items.filter(it => it.type === 'image').length, 0,
+      );
+      setOpLabel('Embedding images…');
+      setProgress({ done: 0, total: totalImages });
+
+      let globalDone = 0;
+      const processedBoards: BoardSnapshot[] = await Promise.all(
+        roomData.boards.map(async (board) => {
+          const { items: embeddedItems } = await embedImages(board.items, () => {
+            globalDone++;
+            setProgress({ done: globalDone, total: totalImages });
+          });
+          return { ...board, items: embeddedItems };
+        }),
+      );
+
+      const payload: RoomExportV2 = { ...roomData, boards: processedBoards };
+      downloadJson(payload, `room-${roomCode}`);
+      setMsg({
+        kind: 'ok',
+        text: `Room exported — ${roomData.boards.length} board${roomData.boards.length !== 1 ? 's' : ''}, ${totalImages} image${totalImages !== 1 ? 's' : ''} embedded.`,
+      });
+    } catch (err) {
+      setMsg({ kind: 'err', text: (err as Error).message });
+    } finally {
+      setBusy(false);
+      setProgress(null);
+      setOpLabel('');
+    }
+  }
+
+  // ── Import dispatcher ────────────────────────────────────────────────
+  async function handleImportFile(file: File) {
+    try {
+      const data = JSON.parse(await file.text());
+      if (data?.type === 'milart-room' && data?.version === 2) {
+        await handleImportRoom(data as RoomExportV2);
+      } else if (data?.type === 'milart-board' && Array.isArray(data?.items)) {
+        await handleImportBoard(data as { name?: string; items: BaseItem[]; strokes?: Stroke[] });
+      } else {
+        throw new Error('Not a valid MilaRT export file (expected milart-board or milart-room v1/v2).');
+      }
+    } catch (err) {
+      setMsg({ kind: 'err', text: (err as Error).message });
+    }
+  }
+
+  // ── Import: single board ─────────────────────────────────────────────
+  async function handleImportBoard(data: { name?: string; items: BaseItem[]; strokes?: Stroke[] }) {
+    const ok = window.confirm(
+      `Import board "${data.name || 'board'}"?\n\nThis replaces the current board (${items.length} items, ${strokes.length} strokes). Cannot be undone.`,
+    );
+    if (!ok) return;
+
+    setBusy(true);
+    const dataUrlCount = data.items.filter(
+      it => it.type === 'image' && (it.data as { url: string }).url?.startsWith('data:'),
+    ).length;
+    setOpLabel(dataUrlCount ? 'Uploading images…' : 'Importing…');
+    setProgress(dataUrlCount ? { done: 0, total: dataUrlCount } : null);
+
+    try {
+      const uploadedItems = await reuploadImages(data.items, (done, total) => {
+        setProgress({ done, total });
+      });
+      onImport({
+        name: typeof data.name === 'string' ? data.name : boardName,
+        items: uploadedItems,
+        strokes: Array.isArray(data.strokes) ? data.strokes : [],
+      });
+      setMsg({ kind: 'ok', text: `Board imported — ${uploadedItems.length} items, ${(data.strokes || []).length} strokes.` });
+    } catch (err) {
+      setMsg({ kind: 'err', text: (err as Error).message });
+    } finally {
+      setBusy(false);
+      setProgress(null);
+      setOpLabel('');
+    }
+  }
+
+  // ── Import: full room ────────────────────────────────────────────────
+  async function handleImportRoom(data: RoomExportV2) {
+    const totalItems = data.boards.reduce((s, b) => s + b.items.length, 0);
+    const ok = window.confirm(
+      `Import full room "${data.room.name}"?\n\n` +
+      `This REPLACES all content in room "${roomCode}" — ${data.boards.length} boards, ${totalItems} items total.\n\nThis cannot be undone.`,
+    );
+    if (!ok) return;
+
+    setBusy(true);
+    const totalDataUrls = data.boards.reduce(
+      (s, b) => s + b.items.filter(it => it.type === 'image' && (it.data as { url: string }).url?.startsWith('data:')).length, 0,
+    );
+    setOpLabel(totalDataUrls ? 'Uploading images…' : 'Saving…');
+    setProgress(totalDataUrls ? { done: 0, total: totalDataUrls } : null);
+
+    try {
+      let globalDone = 0;
+      const processedBoards: BoardSnapshot[] = await Promise.all(
+        data.boards.map(async (board) => ({
+          ...board,
+          items: await reuploadImages(board.items, () => {
+            globalDone++;
+            setProgress({ done: globalDone, total: totalDataUrls });
+          }),
+        })),
+      );
+
+      setOpLabel('Saving to server…');
+      setProgress(null);
+      const result = await api.importRoom(roomCode, { ...data, boards: processedBoards });
+      // navigate first (closes modal via parent), then show brief success
+      onRoomImportSuccess(result.rootBoardId);
+    } catch (err) {
+      setMsg({ kind: 'err', text: (err as Error).message });
+      setBusy(false);
+      setProgress(null);
+      setOpLabel('');
     }
   }
 
@@ -131,19 +344,33 @@ export default function SettingsModal({
           <section>
             <div className="text-xs uppercase tracking-wider text-ink/50 mb-2">Backup</div>
             <div className="flex flex-col gap-2">
+
+              {/* Export buttons */}
               <button
-                onClick={handleExport}
-                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-ink/20 hover:bg-ink hover:text-paper"
+                onClick={handleExportBoard}
+                disabled={busy}
+                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-ink/20 hover:bg-ink hover:text-paper disabled:opacity-50"
               >
                 <DownloadIcon size={16} />
-                <span>Export this board to JSON</span>
+                <span>Export this board  <span className="text-ink/40">(items + strokes + images)</span></span>
               </button>
               <button
+                onClick={handleExportRoom}
+                disabled={busy}
+                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-ink/20 hover:bg-ink hover:text-paper disabled:opacity-50"
+              >
+                <DownloadIcon size={16} />
+                <span>Export full room  <span className="text-ink/40">(all boards + images)</span></span>
+              </button>
+
+              {/* Import */}
+              <button
                 onClick={() => fileRef.current?.click()}
-                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-ink/20 hover:bg-ink hover:text-paper"
+                disabled={busy}
+                className="flex items-center gap-2 w-full text-left rounded-md px-3 py-2 text-sm border border-ink/20 hover:bg-ink hover:text-paper disabled:opacity-50"
               >
                 <UploadIcon size={16} />
-                <span>Import from JSON</span>
+                <span>Import from JSON  <span className="text-ink/40">(board or full room)</span></span>
               </button>
               <input
                 ref={fileRef}
@@ -156,11 +383,29 @@ export default function SettingsModal({
                   if (f) handleImportFile(f);
                 }}
               />
+
+              {/* Progress indicator */}
+              {busy && (
+                <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                  <span className="font-medium">{opLabel || 'Working…'}</span>
+                  {progress && progress.total > 0 && (
+                    <>
+                      {' '}{progress.done}/{progress.total}
+                      <div className="mt-1 h-1 rounded-full bg-amber-200 overflow-hidden">
+                        <div
+                          className="h-full bg-amber-500 transition-all"
+                          style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
               <p className="text-xs text-ink/50 leading-snug">
-                Export saves all items, strokes, and the board name. Image data
-                isn't embedded — image cards in an exported file will reference
-                their original URLs, which only resolve on the server they
-                were uploaded to.
+                Exports embed every image as base64 so the file is fully
+                self-contained — images survive server moves or re-deploys.
+                On import, embedded images are re-uploaded automatically.
               </p>
             </div>
           </section>
