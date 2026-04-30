@@ -35,9 +35,14 @@ export default function BoardPage() {
   const [penSize, setPenSize] = useState<SizeKey>('md');
   const [eraserSize, setEraserSize] = useState<SizeKey>('md');
 
-  const [penOnly] = useState<boolean>(() => {
+  const [penOnly, setPenOnly] = useState<boolean>(() => {
     try { return localStorage.getItem('milart.penOnly') === '1'; } catch { return false; }
   });
+
+  function togglePenOnly(v: boolean) {
+    setPenOnly(v);
+    try { localStorage.setItem('milart.penOnly', v ? '1' : '0'); } catch { /* ignore */ }
+  }
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const canvasRef = useRef<CanvasHandle>(null);
@@ -132,6 +137,10 @@ export default function BoardPage() {
     const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
     addItem({ ...template, x: c.x - template.w / 2, y: c.y - template.h / 2 } as BaseItem);
   }
+  // Use functional setState so rapid successive strokes don't overwrite each other
+  function addStroke(s: import('../types').Stroke) {
+    setStrokes((prev) => [...prev, s]);
+  }
   function updateItem(id: string, patch: Partial<BaseItem>) {
     setItems((xs) => xs.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
@@ -193,6 +202,16 @@ export default function BoardPage() {
     setIsMove(true);
     setDrawOpen(false);
   }
+  // Spring-load: hold Draw button → temporary move/pan mode
+  function onDrawHoldStart() {
+    setIsMove(true);
+    setDrawOpen(false);
+  }
+  // On release → restore draw mode
+  function onDrawHoldEnd() {
+    setIsMove(false);
+    setDrawOpen(true);
+  }
 
   if (loading) return <div className="p-6 text-ink/50">Loading…</div>;
   if (err || !board) return <div className="p-6 text-red-600">Error: {err ?? 'not found'}</div>;
@@ -205,6 +224,8 @@ export default function BoardPage() {
         onRefresh={load}
         onOpenSettings={() => setSettingsOpen(true)}
         saving={saving}
+        isDrawMode={!isMove && drawOpen}
+        onActivateMove={activateMove}
       />
       <SettingsModal
         open={settingsOpen}
@@ -247,6 +268,7 @@ export default function BoardPage() {
           onDeleteMany={deleteItems}
           onAdd={addItem}
           onSetStrokes={setStrokes}
+          onAddStroke={addStroke}
           onMoveLayer={moveLayer}
           onEnterBoard={enterBoard}
         />
@@ -260,6 +282,8 @@ export default function BoardPage() {
           onDraw={toggleDraw}
           onUndo={history.undo}
           onRedo={history.redo}
+          onDrawHoldStart={onDrawHoldStart}
+          onDrawHoldEnd={onDrawHoldEnd}
         />
 
         <DrawTray
@@ -268,10 +292,12 @@ export default function BoardPage() {
           penColor={drawColor}
           penSize={penSize}
           eraserSize={eraserSize}
+          penOnly={penOnly}
           onToolChange={setDrawTool}
           onColorChange={setDrawColor}
           onPenSizeChange={setPenSize}
           onEraserSizeChange={setEraserSize}
+          onPenOnlyChange={togglePenOnly}
           onClose={() => { setDrawOpen(false); setIsMove(true); }}
         />
       </div>

@@ -24,6 +24,7 @@ interface Props {
   onDeleteMany: (ids: string[]) => void;
   onAdd: (item: BaseItem) => void;
   onSetStrokes: (next: Stroke[]) => void;
+  onAddStroke: (s: Stroke) => void;
   onMoveLayer: (id: string, dir: 'forward' | 'backward') => void;
   onEnterBoard: (itemId: string) => void;
 }
@@ -48,7 +49,7 @@ function ptInPoly(px: number, py: number, poly: [number, number][]) {
 const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
-    onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onMoveLayer, onEnterBoard,
+    onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -188,6 +189,23 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   async function onDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
+
+    // Sidebar item drag-to-place
+    const itemJson = e.dataTransfer.getData('application/milart-item');
+    if (itemJson) {
+      try {
+        const template = JSON.parse(itemJson) as Omit<BaseItem, 'x' | 'y'>;
+        const pos = toWorld(e.clientX, e.clientY);
+        onAdd({
+          ...template,
+          x: pos.x - template.w / 2,
+          y: pos.y - template.h / 2,
+          z: 0,
+        } as BaseItem);
+      } catch { /* ignore bad data */ }
+      return;
+    }
+
     const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
     if (!files.length) return;
     const start = toWorld(e.clientX, e.clientY);
@@ -334,6 +352,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         eraser={inEraseMode}
         penOnly={penOnly}
         onChange={onSetStrokes}
+        onAddStroke={onAddStroke}
         toWorld={toWorld}
       />
 

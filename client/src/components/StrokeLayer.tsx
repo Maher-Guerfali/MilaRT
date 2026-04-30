@@ -11,6 +11,7 @@ interface Props {
   eraser: boolean;
   penOnly: boolean;
   onChange: (next: Stroke[]) => void;
+  onAddStroke: (s: Stroke) => void;
   toWorld: (clientX: number, clientY: number) => { x: number; y: number };
 }
 
@@ -36,7 +37,7 @@ function avgPressure(s: Stroke) {
 }
 
 export default function StrokeLayer({
-  view, strokes, drawMode, color, width, tool, eraser, penOnly, onChange, toWorld,
+  view, strokes, drawMode, color, width, tool, eraser, penOnly, onChange, onAddStroke, toWorld,
 }: Props) {
   const activeRef = useRef<Stroke | null>(null);
   const [, force] = useState(0);
@@ -99,7 +100,7 @@ export default function StrokeLayer({
   function onUp(e: React.PointerEvent) {
     drawingRef.current = false;
     const a = activeRef.current;
-    if (a && a.points.length >= 3) onChange([...strokes, a]);
+    if (a && a.points.length >= 3) onAddStroke(a);
     activeRef.current = null;
     rerender();
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* ignore */ }

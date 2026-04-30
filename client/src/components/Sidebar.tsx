@@ -16,6 +16,8 @@ interface Props {
   onRefresh: () => void;
   onOpenSettings: () => void;
   saving: 'idle' | 'saving' | 'saved' | 'error';
+  isDrawMode?: boolean;
+  onActivateMove?: () => void;
 }
 
 const STICKY_COLORS = ['#FFF3C4', '#FFDEDE', '#D4F0DE', '#E0EDFF', '#F0E4FF'];
@@ -36,20 +38,45 @@ interface NavBtnProps {
   Icon: ComponentType<{ size?: number }>;
   label: string;
   hint: string;
+  dragData?: string;
   onClick: () => void;
 }
 
-function NavBtn({ Icon, label, hint, onClick }: NavBtnProps) {
+function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
   const [hov, setHov] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const wasDragged = useRef(false);
+
+  function onDragStart(e: React.DragEvent) {
+    if (!dragData) { e.preventDefault(); return; }
+    wasDragged.current = true;
+    setDragging(true);
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/milart-item', dragData);
+  }
+  function onDragEnd() {
+    setDragging(false);
+    // reset after tick so click handler sees the flag
+    setTimeout(() => { wasDragged.current = false; }, 0);
+  }
+  function handleClick() {
+    if (wasDragged.current) return; // don't fire click after a drag
+    onClick();
+  }
+
   return (
     <Tooltip label={hint} side="right">
       <button
-        onClick={onClick}
+        draggable={!!dragData}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onClick={handleClick}
         onMouseEnter={() => setHov(true)}
         onMouseLeave={() => setHov(false)}
         className={`w-14 flex flex-col items-center justify-center gap-[3px] py-[9px] rounded-[11px] border-0 transition-colors ${
-          hov ? 'bg-ink/10 text-ink' : 'text-ink/50'
+          dragging ? 'opacity-50 scale-95' : hov ? 'bg-ink/10 text-ink' : 'text-ink/50'
         }`}
+        style={{ cursor: dragData ? 'grab' : 'pointer' }}
       >
         <Icon size={18} />
         <span className="text-[9px] font-semibold uppercase tracking-[0.07em] leading-none">{label}</span>
@@ -58,33 +85,50 @@ function NavBtn({ Icon, label, hint, onClick }: NavBtnProps) {
   );
 }
 
-export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, saving }: Props) {
+export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, saving, isDrawMode, onActivateMove }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const tools: { label: string; hint: string; Icon: ComponentType<{ size?: number }>; action: () => void }[] = [
+  function addItem(tmpl: ItemTemplate) {
+    if (isDrawMode && onActivateMove) onActivateMove();
+    onAdd(tmpl);
+  }
+
+  function makeTemplate(partial: Partial<BaseItem>): ItemTemplate {
+    return template(partial);
+  }
+
+  const tools: { label: string; hint: string; Icon: ComponentType<{ size?: number }>; action: () => void; dragData?: string }[] = [
     {
       label: 'Sticky',
-      hint: 'Add a sticky note',
+      hint: 'Drag or tap to add a sticky note',
       Icon: StickyIcon,
-      action: () => onAdd(template({
+      get dragData() {
+        return JSON.stringify(makeTemplate({
+          type: 'sticky',
+          data: { text: '', color: STICKY_COLORS[Math.floor(Math.random() * STICKY_COLORS.length)] },
+        }));
+      },
+      action: () => addItem(template({
         type: 'sticky',
         data: { text: '', color: STICKY_COLORS[Math.floor(Math.random() * STICKY_COLORS.length)] },
       })),
     },
     {
       label: 'Text',
-      hint: 'Add free text',
+      hint: 'Drag or tap to add free text',
       Icon: TextIcon,
-      action: () => onAdd(template({
+      dragData: JSON.stringify(template({ type: 'link', w: 178, h: 66, data: { url: '', title: '' } })),
+      action: () => addItem(template({
         type: 'link', w: 178, h: 66,
         data: { url: '', title: '' },
       })),
     },
     {
       label: 'Board',
-      hint: 'Add a nested board',
+      hint: 'Drag or tap to add a nested board',
       Icon: BoardIcon,
-      action: () => onAdd(template({
+      dragData: JSON.stringify(template({ type: 'board', w: 118, h: 138, data: { name: 'New board' } })),
+      action: () => addItem(template({
         type: 'board', w: 118, h: 138,
         data: { name: 'New board' },
       })),
@@ -93,13 +137,17 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
       label: 'Image',
       hint: 'Drop or upload image',
       Icon: ImageIcon,
-      action: () => fileRef.current?.click(),
+      action: () => {
+        if (isDrawMode && onActivateMove) onActivateMove();
+        fileRef.current?.click();
+      },
     },
     {
       label: 'Link',
-      hint: 'Add a URL card',
+      hint: 'Drag or tap to add a URL card',
       Icon: LinkIcon,
-      action: () => onAdd(template({
+      dragData: JSON.stringify(template({ type: 'link', w: 218, h: 44, data: { url: '', title: '' } })),
+      action: () => addItem(template({
         type: 'link', w: 218, h: 44,
         data: { url: '', title: '' },
       })),
@@ -142,8 +190,8 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, sa
 
       {/* Add tools */}
       <div className="flex flex-col gap-px py-2.5 border-b border-ink/10 w-full items-center">
-        {tools.map(({ label, hint, Icon, action }) => (
-          <NavBtn key={label} Icon={Icon} label={label} hint={hint} onClick={action} />
+        {tools.map(({ label, hint, Icon, action, dragData }) => (
+          <NavBtn key={label} Icon={Icon} label={label} hint={hint} dragData={dragData} onClick={action} />
         ))}
         <input
           ref={fileRef}

@@ -9,10 +9,12 @@ interface Props {
   penColor: string;
   penSize: SizeKey;
   eraserSize: SizeKey;
+  penOnly: boolean;
   onToolChange: (t: DrawTool) => void;
   onColorChange: (c: string) => void;
   onPenSizeChange: (s: SizeKey) => void;
   onEraserSizeChange: (s: SizeKey) => void;
+  onPenOnlyChange: (v: boolean) => void;
   onClose: () => void;
 }
 
@@ -21,7 +23,7 @@ const PRESETS = ['#1a1510', '#D97435', '#E8B830', '#2a9d8f', '#e76f51', '#8b5cf6
 export default function DrawTray(props: Props) {
   if (!props.open) return null;
 
-  const { drawTool } = props;
+  const { drawTool, penOnly } = props;
   const activeSize = drawTool === 'eraser' ? props.eraserSize : props.penSize;
   const setActiveSize = drawTool === 'eraser' ? props.onEraserSizeChange : props.onPenSizeChange;
 
@@ -55,6 +57,25 @@ export default function DrawTray(props: Props) {
             <ToolBtn active={drawTool === 'pencil'} onClick={() => props.onToolChange('pencil')}>
               <PencilArt active={drawTool === 'pencil'} />
             </ToolBtn>
+            {/* Pencil-only (Apple Pencil / stylus) mode toggle */}
+            <button
+              onClick={() => props.onPenOnlyChange(!penOnly)}
+              title={penOnly ? 'Pencil-only ON — touch ignored' : 'Pencil-only OFF — tap to enable palm rejection'}
+              className="flex flex-col items-center gap-[5px] px-1.5 pt-1 pb-1.5 rounded-xl border-0 cursor-pointer transition-colors self-end mb-[1px]"
+              style={{
+                background: penOnly ? 'rgba(217,116,53,0.12)' : 'transparent',
+              }}
+            >
+              <ApplePencilIcon active={penOnly} />
+              <div
+                className="rounded-full transition-all"
+                style={{
+                  width: penOnly ? 18 : 6,
+                  height: 3,
+                  background: penOnly ? '#D97435' : 'rgba(26,21,16,0.10)',
+                }}
+              />
+            </button>
             <ToolBtn active={drawTool === 'eraser'} onClick={() => props.onToolChange('eraser')}>
               <EraserArt active={drawTool === 'eraser'} />
             </ToolBtn>
@@ -245,6 +266,22 @@ function SelectArt({ active }: { active: boolean }) {
       <circle cx="20" cy="12" r="4.5" fill="none" stroke={clr} strokeWidth="1.8"/>
       <line x1="12" y1="15.5" x2="21" y2="39" stroke={clr} strokeWidth="1.8" strokeLinecap="round"/>
       <line x1="16" y1="15.5" x2="7"  y2="39" stroke={clr} strokeWidth="1.8" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+/** Small Apple Pencil icon — indicates stylus-only / palm-rejection mode */
+function ApplePencilIcon({ active }: { active: boolean }) {
+  const clr = active ? '#D97435' : '#BBBBBB';
+  return (
+    <svg width="16" height="32" viewBox="0 0 16 32"
+      style={{ filter: active ? 'drop-shadow(0 1px 4px rgba(217,116,53,0.5))' : 'none', transition: 'filter 0.18s' }}>
+      {/* pencil body */}
+      <rect x="5" y="2" width="6" height="19" rx="3" fill={clr} opacity={active ? 1 : 0.65} />
+      {/* tip */}
+      <polygon points="5,21 11,21 8,28" fill={clr} opacity={active ? 1 : 0.6} />
+      {/* flat cap */}
+      <rect x="5" y="1" width="6" height="3" rx="1.5" fill={clr} opacity={active ? 0.7 : 0.35} />
     </svg>
   );
 }
