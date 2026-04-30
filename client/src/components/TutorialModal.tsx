@@ -21,69 +21,116 @@ const STEPS = [
     Illustration: DrawIllustration,
   },
   {
-    title: 'You\'re all set — enjoy!',
+    title: "You're all set — enjoy!",
     text: 'Everything auto-saves. Undo / redo with ⌘Z. Share your room code with friends so you can collaborate. Have fun!',
     Illustration: EnjoyIllustration,
   },
 ];
 
-export default function TutorialModal({ onClose }: Props) {
-  const [step, setStep] = useState(0);
-  const total = STEPS.length;
-  const { title, text, Illustration } = STEPS[step];
-  const isLast = step === total - 1;
+// Fade duration in ms — keep in sync with CSS transition below
+const FADE_MS = 200;
 
-  function next() {
-    if (isLast) { onClose(); return; }
-    setStep((s) => s + 1);
+export default function TutorialModal({ onClose }: Props) {
+  // `step` drives the dots immediately; `visibleStep` drives the illustration with a delay
+  const [step, setStep] = useState(0);
+  const [visibleStep, setVisibleStep] = useState(0);
+  const [imgOpacity, setImgOpacity] = useState(1);
+
+  const total = STEPS.length;
+  const isLast = step === total - 1;
+  const { title, text, Illustration } = STEPS[visibleStep];
+
+  function goTo(next: number) {
+    if (next < 0 || next > total - 1) return;
+    setStep(next);
+    // Fade out illustration, swap content, fade back in
+    setImgOpacity(0);
+    setTimeout(() => {
+      setVisibleStep(next);
+      setImgOpacity(1);
+    }, FADE_MS);
   }
-  function prev() { setStep((s) => Math.max(0, s - 1)); }
+
+  function handleNext() {
+    if (isLast) { onClose(); return; }
+    goTo(step + 1);
+  }
+  function handlePrev() { goTo(step - 1); }
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-      <div
-        className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
-        style={{ background: '#FDFAF5' }}
-      >
-        {/* Illustration area */}
-        <div
-          className="w-full flex items-center justify-center"
-          style={{ height: 200, background: 'linear-gradient(135deg, #FFF3E0, #FDE8C8)' }}
-        >
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)' }}
+    >
+      {/* Fixed-size card — never scales with viewport */}
+      <div style={{
+        width: 420,
+        background: '#FDFAF5',
+        borderRadius: 24,
+        overflow: 'hidden',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.28)',
+        flexShrink: 0,
+      }}>
+
+        {/* Illustration — dissolves between steps */}
+        <div style={{
+          height: 220,
+          background: 'linear-gradient(135deg, #FFF3E0, #FDE8C8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: imgOpacity,
+          transition: `opacity ${FADE_MS}ms ease`,
+        }}>
           <Illustration />
         </div>
 
         {/* Content */}
-        <div className="px-7 pt-5 pb-6">
+        <div style={{ padding: '20px 28px 24px' }}>
+
           {/* Step dots */}
-          <div className="flex gap-[6px] justify-center mb-4">
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 16 }}>
             {STEPS.map((_, i) => (
               <div
                 key={i}
-                className="rounded-full transition-all"
                 style={{
-                  width: i === step ? 20 : 7,
+                  borderRadius: 99,
                   height: 7,
+                  width: i === step ? 20 : 7,
                   background: i === step ? '#D97435' : 'rgba(26,21,16,0.15)',
+                  transition: 'width 0.2s ease, background 0.2s ease',
                 }}
               />
             ))}
           </div>
 
-          <h2 className="text-[18px] font-bold text-ink text-center leading-snug mb-2">{title}</h2>
-          <p className="text-[13.5px] text-ink/60 text-center leading-relaxed mb-6">{text}</p>
+          <h2 style={{
+            fontSize: 18, fontWeight: 700, textAlign: 'center',
+            color: '#1a1510', lineHeight: 1.3, margin: '0 0 8px',
+          }}>{title}</h2>
+          <p style={{
+            fontSize: 13.5, color: 'rgba(26,21,16,0.6)', textAlign: 'center',
+            lineHeight: 1.65, margin: '0 0 22px',
+          }}>{text}</p>
 
-          <div className="flex gap-3">
+          <div style={{ display: 'flex', gap: 10 }}>
             {step > 0 && (
               <button
-                onClick={prev}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-ink/15 text-ink/60 hover:bg-ink/5 transition-colors"
+                onClick={handlePrev}
+                style={{
+                  flex: 1, padding: '10px 0', borderRadius: 12,
+                  fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid rgba(26,21,16,0.15)',
+                  color: 'rgba(26,21,16,0.55)', background: 'transparent',
+                }}
               >Back</button>
             )}
             <button
-              onClick={next}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all"
+              onClick={handleNext}
               style={{
+                flex: 1, padding: '10px 0', borderRadius: 12,
+                fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                color: 'white', border: 'none',
                 background: 'linear-gradient(135deg, #D97435, #F08848)',
                 boxShadow: '0 4px 14px rgba(217,116,53,0.35)',
               }}
