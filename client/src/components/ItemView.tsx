@@ -428,16 +428,19 @@ function BoardRefBox({
           </div>
         )}
 
-        {/* Enter-board arrow — visible only when selected */}
-        {selected && (
-          <button
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onEnterBoard(); }}
-            title="Open board"
-            className="absolute bottom-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-white text-[13px] shadow-md z-10"
-            style={{ background: '#D97435', lineHeight: 1 }}
-          >→</button>
-        )}
+        {/* Enter-board arrow — always visible, gets orange bg when selected */}
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onEnterBoard(); }}
+          title="Open board"
+          className="absolute bottom-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-[13px] z-10 transition-all"
+          style={{
+            background: selected ? '#D97435' : 'transparent',
+            color: selected ? '#fff' : 'rgba(26,21,16,0.45)',
+            boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.35)' : 'none',
+            lineHeight: 1,
+          }}
+        >→</button>
 
         <div
           className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[9px] font-bold uppercase tracking-[0.05em] pointer-events-none"
