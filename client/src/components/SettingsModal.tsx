@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { BaseItem, Stroke, BoardExportV2, RoomExportV2, BoardSnapshot } from '../types';
 import { api } from '../api';
-import { CloseIcon, DownloadIcon, UploadIcon, LogoutIcon, TrashIcon } from './icons';
+import { CloseIcon, DownloadIcon, UploadIcon, LogoutIcon } from './icons';
 
 // ── image-embedding helpers (module-level, no React deps) ─────────────
 
