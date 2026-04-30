@@ -1,4 +1,4 @@
-import type { Board, Room, BaseItem, Stroke, Connection } from './types';
+import type { Board, Room, BaseItem, Stroke } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -27,12 +27,11 @@ export const api = {
     boardId: string,
     items: BaseItem[],
     strokes: Stroke[],
-    connections: Connection[],
     name?: string,
   ) =>
     req<{ _id: string; updatedAt: string }>(`/api/boards/${boardId}`, {
       method: 'PUT',
-      body: JSON.stringify({ items, strokes, connections, name }),
+      body: JSON.stringify({ items, strokes, name }),
     }),
 
   createNestedBoard: (roomCode: string, parentBoardId: string, name?: string) =>

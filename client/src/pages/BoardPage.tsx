@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
-import type { Board, BaseItem, BoardRefData, Stroke, Connection } from '../types';
+import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
 import Canvas, { type CanvasHandle } from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
@@ -13,7 +13,6 @@ import { useHistory } from '../hooks/useHistory';
 interface Snap {
   items: BaseItem[];
   strokes: Stroke[];
-  connections: Connection[];
   name: string;
 }
 
@@ -23,7 +22,6 @@ export default function BoardPage() {
   const [board, setBoard] = useState<Board | null>(null);
   const [items, setItems] = useState<BaseItem[]>([]);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [connections, setConnections] = useState<Connection[]>([]);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -45,13 +43,12 @@ export default function BoardPage() {
   const canvasRef = useRef<CanvasHandle>(null);
 
   const snap = useMemo<Snap>(
-    () => ({ items, strokes, connections, name }),
-    [items, strokes, connections, name],
+    () => ({ items, strokes, name }),
+    [items, strokes, name],
   );
   const history = useHistory<Snap>(snap, (s) => {
     setItems(s.items);
     setStrokes(s.strokes);
-    setConnections(s.connections);
     setName(s.name);
   });
 
@@ -89,7 +86,6 @@ export default function BoardPage() {
       setBoard(b);
       setItems(b.items);
       setStrokes(b.strokes || []);
-      setConnections(b.connections || []);
       setName(b.name);
       setLastSavedAt(new Date(b.updatedAt));
     } catch (e) {
@@ -104,11 +100,10 @@ export default function BoardPage() {
   const savedRef = useRef<string>('');
   useEffect(() => {
     if (!board) return;
-    const s = JSON.stringify({ items, strokes, connections, name });
+    const s = JSON.stringify({ items, strokes, name });
     const initial = JSON.stringify({
       items: board.items,
       strokes: board.strokes || [],
-      connections: board.connections || [],
       name: board.name,
     });
     if (savedRef.current === '' && s === initial) {
@@ -119,7 +114,7 @@ export default function BoardPage() {
     setSaving('saving');
     const t = setTimeout(async () => {
       try {
-        const res = await api.saveBoard(board._id, items, strokes, connections, name);
+        const res = await api.saveBoard(board._id, items, strokes, name);
         savedRef.current = s;
         setSaving('saved');
         setLastSavedAt(new Date(res.updatedAt));
@@ -128,7 +123,7 @@ export default function BoardPage() {
       }
     }, 1500);
     return () => clearTimeout(t);
-  }, [items, strokes, connections, name, board]);
+  }, [items, strokes, name, board]);
 
   function addItem(item: BaseItem) {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
@@ -142,12 +137,10 @@ export default function BoardPage() {
   }
   function deleteItem(id: string) {
     setItems((xs) => xs.filter((it) => it.id !== id));
-    setConnections((cs) => cs.filter((c) => c.fromItemId !== id && c.toItemId !== id));
   }
   function deleteItems(ids: string[]) {
     const setIds = new Set(ids);
     setItems((xs) => xs.filter((it) => !setIds.has(it.id)));
-    setConnections((cs) => cs.filter((c) => !setIds.has(c.fromItemId) && !setIds.has(c.toItemId)));
   }
   function moveItems(ids: string[], delta: { dx: number; dy: number }) {
     const setIds = new Set(ids);
@@ -169,12 +162,6 @@ export default function BoardPage() {
       return next;
     });
   }
-  function addConnection(c: Connection) {
-    setConnections((cs) => [...cs, c]);
-  }
-  function deleteConnection(id: string) {
-    setConnections((cs) => cs.filter((c) => c.id !== id));
-  }
 
   async function enterBoard(itemId: string) {
     if (!code || !board) return;
@@ -189,8 +176,8 @@ export default function BoardPage() {
         x.id === itemId ? { ...x, data: { ...(x.data as object), boardId: bid } } : x
       );
       setItems(updated);
-      await api.saveBoard(board._id, updated, strokes, connections, name);
-      savedRef.current = JSON.stringify({ items: updated, strokes, connections, name });
+      await api.saveBoard(board._id, updated, strokes, name);
+      savedRef.current = JSON.stringify({ items: updated, strokes, name });
     }
     nav(`/r/${code}/b/${bid}`);
   }
@@ -247,7 +234,6 @@ export default function BoardPage() {
           ref={canvasRef}
           items={items}
           strokes={strokes}
-          connections={connections}
           isMove={isMove}
           drawOpen={drawOpen}
           drawTool={drawTool}
@@ -261,8 +247,6 @@ export default function BoardPage() {
           onDeleteMany={deleteItems}
           onAdd={addItem}
           onSetStrokes={setStrokes}
-          onAddConnection={addConnection}
-          onDeleteConnection={deleteConnection}
           onMoveLayer={moveLayer}
           onEnterBoard={enterBoard}
         />

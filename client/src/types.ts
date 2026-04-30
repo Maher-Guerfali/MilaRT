@@ -32,12 +32,6 @@ export interface Stroke {
   points: number[];
 }
 
-export interface Connection {
-  id: string;
-  fromItemId: string;
-  toItemId: string;
-}
-
 export interface Board {
   _id: string;
   roomId: string;
@@ -45,7 +39,6 @@ export interface Board {
   name: string;
   items: BaseItem[];
   strokes: Stroke[];
-  connections: Connection[];
   updatedAt: string;
   breadcrumbs: { _id: string; name: string }[];
 }

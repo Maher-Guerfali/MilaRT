@@ -1,17 +1,16 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
-import type { BaseItem, Stroke, Connection } from '../types';
+import type { BaseItem, Stroke } from '../types';
 import { api } from '../api';
 import ItemView from './ItemView';
 import StrokeLayer from './StrokeLayer';
-import ConnectionLayer from './ConnectionLayer';
+import MiniMap from './MiniMap';
 import type { DrawTool, SizeKey } from './DrawTray';
 import { PlusIcon, MinusIcon, FitIcon } from './icons';
 
 interface Props {
   items: BaseItem[];
   strokes: Stroke[];
-  connections: Connection[];
   isMove: boolean;
   drawOpen: boolean;
   drawTool: DrawTool;
@@ -25,8 +24,6 @@ interface Props {
   onDeleteMany: (ids: string[]) => void;
   onAdd: (item: BaseItem) => void;
   onSetStrokes: (next: Stroke[]) => void;
-  onAddConnection: (c: Connection) => void;
-  onDeleteConnection: (id: string) => void;
   onMoveLayer: (id: string, dir: 'forward' | 'backward') => void;
   onEnterBoard: (itemId: string) => void;
 }
@@ -50,20 +47,18 @@ function ptInPoly(px: number, py: number, poly: [number, number][]) {
 
 const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
-    items, strokes, connections, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
-    onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes,
-    onAddConnection, onDeleteConnection, onMoveLayer, onEnterBoard,
+    items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
+    onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onMoveLayer, onEnterBoard,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
+  const [size, setSize] = useState({ w: 0, h: 0 });
   const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
   const [lassoActive, setLassoActive] = useState(false);
-  const [pendingConn, setPendingConn] = useState<{ fromItemId: string; toScreenX: number; toScreenY: number } | null>(null);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
 
   const inDrawMode  = drawOpen && drawTool === 'pencil';
@@ -84,6 +79,20 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   }
   useImperativeHandle(ref, () => ({ getCenter: centerOfView }));
 
+  // Track wrap size so the mini-map can draw the viewport rect accurately.
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0].contentRect;
+      setSize({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    const r = el.getBoundingClientRect();
+    setSize({ w: r.width, h: r.height });
+    return () => ro.disconnect();
+  }, []);
+
   function zoomAround(clientX: number, clientY: number, nextScale: number) {
     const rect = wrapRef.current!.getBoundingClientRect();
     const cx = clientX - rect.left;
@@ -102,7 +111,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   function onBgPointerDown(e: React.PointerEvent) {
     if (drawOpen && drawTool !== 'select') return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
-    setSelectedConnectionId(null);
 
     if (inSelectMode) {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -226,7 +234,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
           id: nanoid(10),
           type: isUrl ? 'link' : 'sticky',
           x: pos.x - 99, y: pos.y - 33,
-          // YouTube embeds get a video-shaped default (16:9-ish).
           w: isYouTube ? 320 : isUrl ? 218 : 198,
           h: isYouTube ? 200 : isUrl ? 44 : 164,
           z: 0,
@@ -242,29 +249,19 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedConnectionId) {
-          e.preventDefault();
-          onDeleteConnection(selectedConnectionId);
-          setSelectedConnectionId(null);
-          return;
-        }
-        if (selection.size) {
-          e.preventDefault();
-          onDeleteMany(Array.from(selection));
-          setSelection(new Set());
-        }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selection.size) {
+        e.preventDefault();
+        onDeleteMany(Array.from(selection));
+        setSelection(new Set());
       } else if (e.key === 'Escape') {
         setSelection(new Set());
-        setSelectedConnectionId(null);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selection, selectedConnectionId, onDeleteMany, onDeleteConnection]);
+  }, [selection, onDeleteMany]);
 
   function selectItem(id: string, additive: boolean) {
-    setSelectedConnectionId(null);
     setSelection((prev) => {
       const next = new Set(prev);
       if (additive) {
@@ -278,32 +275,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
 
   function moveGroup(ids: string[], dx: number, dy: number) {
     onUpdateMany(ids, { dx, dy });
-  }
-
-  function startConnection(e: React.PointerEvent, fromItemId: string) {
-    setPendingConn({ fromItemId, toScreenX: e.clientX, toScreenY: e.clientY });
-
-    function onMove(ev: PointerEvent) {
-      setPendingConn((p) => (p ? { ...p, toScreenX: ev.clientX, toScreenY: ev.clientY } : null));
-    }
-    function onUp(ev: PointerEvent) {
-      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
-      const itemEl = el?.closest('[data-item-id]') as HTMLElement | null;
-      const targetId = itemEl?.getAttribute('data-item-id');
-      if (targetId && targetId !== fromItemId) {
-        const exists = connections.some((c) => c.fromItemId === fromItemId && c.toItemId === targetId);
-        if (!exists) {
-          onAddConnection({ id: nanoid(10), fromItemId, toItemId: targetId });
-        }
-      }
-      setPendingConn(null);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
-    }
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
   }
 
   const cursor =
@@ -348,20 +319,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onMoveGroup={moveGroup}
             onDelete={() => onDelete(it.id)}
             onEnterBoard={() => onEnterBoard(it.id)}
-            onConnectionStart={interactive ? startConnection : undefined}
             onMoveLayer={onMoveLayer}
           />
         ))}
       </div>
-
-      <ConnectionLayer
-        view={view}
-        items={items}
-        connections={connections}
-        pending={pendingConn}
-        selectedConnectionId={selectedConnectionId}
-        onSelectConnection={(id) => { setSelectedConnectionId(id); setSelection(new Set()); }}
-      />
 
       <StrokeLayer
         view={view}
@@ -389,6 +350,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
           />
         </svg>
       )}
+
+      {/* Mini-map sits above the zoom dock in the bottom-right. */}
+      <MiniMap items={items} view={view} canvasSize={size} />
 
       <div
         className="absolute bottom-[22px] right-4 z-20 rounded-[13px] border border-ink/10 flex items-center p-1 gap-px"

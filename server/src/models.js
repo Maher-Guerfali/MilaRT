@@ -30,17 +30,6 @@ const StrokeSchema = new Schema(
   { _id: false }
 );
 
-// Lightweight directed link between two items on a board. Anchors are
-// implicit (item bounding-box centers) for now.
-const ConnectionSchema = new Schema(
-  {
-    id: { type: String, required: true },
-    fromItemId: { type: String, required: true },
-    toItemId:   { type: String, required: true },
-  },
-  { _id: false }
-);
-
 const BoardSchema = new Schema(
   {
     roomId: { type: Types.ObjectId, ref: 'Room', required: true, index: true },
@@ -48,7 +37,6 @@ const BoardSchema = new Schema(
     name: { type: String, default: 'Untitled board' },
     items: { type: [ItemSchema], default: [] },
     strokes: { type: [StrokeSchema], default: [] },
-    connections: { type: [ConnectionSchema], default: [] },
   },
   { timestamps: true }
 );
