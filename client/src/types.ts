@@ -59,6 +59,23 @@ export interface BoardSnapshot {
   strokes: Stroke[];
 }
 
+// ── AI assistant ───────────────────────────────────────────────────────
+export type AIOperationType = 'move' | 'resize' | 'update' | 'add' | 'delete';
+
+export interface AIOperation {
+  type: AIOperationType;
+  /** Target item id (required for move / resize / update / delete) */
+  id?: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  /** Partial data to merge into item.data (for type === 'update') */
+  data?: Record<string, unknown>;
+  /** Full new item to create (for type === 'add') */
+  item?: BaseItem;
+}
+
 // Full room export — all boards in one file, including nested ones.
 // Image items may have data.url as a base64 data: URL when exported
 // with the "portable" option so images travel with the file.

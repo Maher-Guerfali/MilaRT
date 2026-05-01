@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
-import type { Board, BaseItem, BoardRefData, Stroke } from '../types';
+import type { Board, BaseItem, BoardRefData, Stroke, AIOperation } from '../types';
 import Canvas, { type CanvasHandle } from '../components/Canvas';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
@@ -9,6 +9,7 @@ import CanvasDock from '../components/CanvasDock';
 import DrawTray, { type DrawTool, type SizeKey } from '../components/DrawTray';
 import SettingsModal from '../components/SettingsModal';
 import TutorialModal from '../components/TutorialModal';
+import AIPreviewModal from '../components/AIPreviewModal';
 import { useHistory } from '../hooks/useHistory';
 
 interface Snap {
@@ -48,6 +49,51 @@ export default function BoardPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const canvasRef = useRef<CanvasHandle>(null);
+
+  // ── AI assistant state ─────────────────────────────────────────────
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiPreview, setAiPreview] = useState<{
+    explanation: string;
+    operations: AIOperation[];
+  } | null>(null);
+
+  async function handleAISubmit(prompt: string) {
+    setAiLoading(true);
+    try {
+      const result = await api.aiChat(items, prompt);
+      setAiPreview(result);
+    } catch (e) {
+      alert(`AI error: ${(e as Error).message}`);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function applyAIOperations(ops: AIOperation[]) {
+    setItems((prev) => {
+      let next = [...prev];
+      for (const op of ops) {
+        if (op.type === 'move' && op.id) {
+          next = next.map((it) =>
+            it.id === op.id ? { ...it, x: op.x ?? it.x, y: op.y ?? it.y } : it,
+          );
+        } else if (op.type === 'resize' && op.id) {
+          next = next.map((it) =>
+            it.id === op.id ? { ...it, w: op.w ?? it.w, h: op.h ?? it.h } : it,
+          );
+        } else if (op.type === 'update' && op.id && op.data) {
+          next = next.map((it) =>
+            it.id === op.id ? { ...it, data: { ...(it.data as object), ...op.data } } : it,
+          );
+        } else if (op.type === 'add' && op.item) {
+          next = [...next, { ...op.item, z: next.length }];
+        } else if (op.type === 'delete' && op.id) {
+          next = next.filter((it) => it.id !== op.id);
+        }
+      }
+      return next;
+    });
+  }
 
   const snap = useMemo<Snap>(
     () => ({ items, strokes, name }),
@@ -235,6 +281,18 @@ export default function BoardPage() {
           try { localStorage.setItem('milart.tutorialSeen', '1'); } catch { /* ignore */ }
         }} />
       )}
+      {aiPreview && (
+        <AIPreviewModal
+          explanation={aiPreview.explanation}
+          operations={aiPreview.operations}
+          items={items}
+          onApply={() => {
+            applyAIOperations(aiPreview.operations);
+            setAiPreview(null);
+          }}
+          onDiscard={() => setAiPreview(null)}
+        />
+      )}
       <Sidebar
         roomCode={code!}
         onAdd={addItemAtCenter}
@@ -271,6 +329,8 @@ export default function BoardPage() {
           currentName={name}
           saving={saving}
           onRename={setName}
+          onAISubmit={handleAISubmit}
+          aiLoading={aiLoading}
         />
 
         <Canvas

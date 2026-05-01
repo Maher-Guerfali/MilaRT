@@ -228,6 +228,142 @@ export function makeRoutes({ uploadDir }) {
     res.json({ ok: true });
   });
 
+  // ── AI assistant ───────────────────────────────────────────────────
+  // POST /api/ai/chat
+  // Body: { items: BaseItem[], prompt: string }
+  // Returns: { operations: AIOperation[], explanation: string }
+  r.post('/ai/chat', async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
+    }
+
+    const { items, prompt } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'missing prompt' });
+    }
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: 'missing items array' });
+    }
+
+    const systemMessage = `You are an AI assistant for a canvas board app called MilaRT.
+The board contains items positioned in a 2D world (pixel coordinates). Each item has:
+- id: unique string
+- type: "sticky" | "image" | "link" | "board"
+- x, y: top-left position in world pixels
+- w, h: width and height in pixels
+- z: layer index
+- data: type-specific payload
+  - sticky: { text: string, color: string (hex) }
+  - image: { url: string }
+  - link: { url: string, title: string }
+  - board: { boardId: string, name: string }
+
+When asked to perform operations call apply_board_operations with a list of operations.
+Layout rules:
+- "organise horizontally" — same y for all target items, equal x spacing, keep original sizes
+- "organise in a grid" — arrange in rows/columns with even spacing
+- "add titles/labels" — create sticky notes above each image item (type:"sticky", data.color:"#FDFAF5")
+- "generate descriptions" — create sticky notes near items with helpful descriptive text
+New item IDs must start with "ai-" followed by a short unique suffix.
+Default sticky: w:200, h:80. Colors: yellow "#E8B830", white "#FDFAF5", orange "#D97435", blue "#dbeafe".
+Return operations even if the request has no effect (empty array is valid).`;
+
+    const textPart = {
+      type: 'text',
+      text: `Board items (${items.length} total):\n${JSON.stringify(items, null, 2)}\n\nUser request: ${prompt.trim()}`,
+    };
+    const contentParts = [textPart];
+
+    // Attach up to 4 image URLs for vision when the prompt suggests content analysis
+    const lp = prompt.toLowerCase();
+    const wantsVision = /title|descri|label|caption|name|what|identif|recogni/.test(lp);
+    if (wantsVision) {
+      const imageItems = items
+        .filter(it => it.type === 'image' && typeof it.data?.url === 'string' && /^https?:\/\//.test(it.data.url))
+        .slice(0, 4);
+      for (const img of imageItems) {
+        contentParts.push({ type: 'image_url', image_url: { url: img.data.url, detail: 'low' } });
+      }
+    }
+
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'apply_board_operations',
+          description: 'Apply a list of operations to the canvas board items',
+          parameters: {
+            type: 'object',
+            properties: {
+              operations: {
+                type: 'array',
+                description: 'Operations to execute in order',
+                items: {
+                  type: 'object',
+                  properties: {
+                    type: { type: 'string', enum: ['move', 'resize', 'update', 'add', 'delete'] },
+                    id:   { type: 'string', description: 'Target item ID (move/resize/update/delete)' },
+                    x:    { type: 'number' },
+                    y:    { type: 'number' },
+                    w:    { type: 'number' },
+                    h:    { type: 'number' },
+                    data: { type: 'object', description: 'Partial data fields to merge (update)' },
+                    item: { type: 'object', description: 'Full new item object (add)' },
+                  },
+                  required: ['type'],
+                },
+              },
+              explanation: { type: 'string', description: 'One sentence summary of what was done' },
+            },
+            required: ['operations', 'explanation'],
+          },
+        },
+      },
+    ];
+
+    try {
+      const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: systemMessage },
+            { role: 'user',   content: contentParts },
+          ],
+          tools,
+          tool_choice: { type: 'function', function: { name: 'apply_board_operations' } },
+          max_tokens: 3000,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text().catch(() => '');
+        console.error('[ai] OpenAI error:', aiRes.status, errText);
+        return res.status(502).json({ error: `OpenAI error ${aiRes.status}`, detail: errText.slice(0, 300) });
+      }
+
+      const aiData = await aiRes.json();
+      const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+      if (!toolCall?.function?.arguments) {
+        return res.status(502).json({ error: 'AI returned no operations' });
+      }
+
+      const result = JSON.parse(toolCall.function.arguments);
+      res.json({
+        operations: Array.isArray(result.operations) ? result.operations : [],
+        explanation: typeof result.explanation === 'string' ? result.explanation : '',
+      });
+    } catch (err) {
+      console.error('[ai] error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Export / Import ────────────────────────────────────────────────
 
   // GET /api/rooms/:code/export

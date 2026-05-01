@@ -1,4 +1,4 @@
-import type { Board, Room, BaseItem, Stroke, RoomExportV2 } from './types';
+import type { Board, Room, BaseItem, Stroke, RoomExportV2, AIOperation } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -100,4 +100,14 @@ export const api = {
   /** Clear all strokes on a board. */
   clearStrokes: (boardId: string) =>
     req<{ ok: true }>(`/api/boards/${boardId}/strokes`, { method: 'DELETE' }),
+
+  // ── AI assistant ───────────────────────────────────────────────────
+
+  /** Send a natural-language prompt + current items to the AI.
+   *  Returns a list of structured operations + a human-readable explanation. */
+  aiChat: (items: BaseItem[], prompt: string) =>
+    req<{ operations: AIOperation[]; explanation: string }>('/api/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ items, prompt }),
+    }),
 };
