@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { BaseItem } from '../types';
 
 interface Props {
@@ -20,6 +20,7 @@ const ITEM_TYPE_COLOR: Record<string, string> = {
 export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingRef = useRef(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   const visW = canvasSize.w / view.scale;
   const visH = canvasSize.h / view.scale;
@@ -86,54 +87,73 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
       style={{
         bottom: 64,
         width: MAP_PX,
-        height: MAP_PX,
+        height: collapsed ? 28 : MAP_PX,
         background: 'rgba(253,250,245,0.96)',
         backdropFilter: 'blur(14px)',
         boxShadow: '0 4px 18px rgba(26,21,16,0.10)',
+        transition: 'height 0.25s cubic-bezier(0.4,0,0.2,1)',
       }}
     >
-      <div className="absolute top-1.5 left-2 text-[9px] font-bold uppercase tracking-[0.08em] text-ink/40 pointer-events-none">
-        Map
-      </div>
-      <svg
-        ref={svgRef}
-        width={MAP_PX}
-        height={MAP_PX}
-        viewBox={`0 0 ${MAP_PX} ${MAP_PX}`}
-        style={{ display: 'block', touchAction: 'none' }}
+      {/* Header bar — always visible, click to toggle */}
+      <button
+        onClick={() => setCollapsed(c => !c)}
+        className="absolute top-0 left-0 right-0 h-7 flex items-center justify-between px-2 hover:bg-ink/5 transition-colors z-10"
+        style={{ cursor: 'pointer' }}
       >
-        {items.map((it) => {
-          const p = project(it.x, it.y);
-          return (
-            <rect
-              key={it.id}
-              x={p.x}
-              y={p.y}
-              width={Math.max(2, it.w * mapScale)}
-              height={Math.max(2, it.h * mapScale)}
-              rx={1.5}
-              fill={ITEM_TYPE_COLOR[it.type] || '#888'}
-              opacity={0.55}
-            />
-          );
-        })}
-        {/* Current viewport — draggable amber rect. */}
-        <rect
-          x={v.x}
-          y={v.y}
-          width={vw}
-          height={vh}
-          fill="rgba(217,116,53,0.10)"
-          stroke="#D97435"
-          strokeWidth={1.5}
-          rx={2}
-          style={{ cursor: draggingRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
-          onPointerDown={onRectPointerDown}
-          onPointerMove={onRectPointerMove}
-          onPointerUp={onRectPointerUp}
-          onPointerCancel={onRectPointerUp}
-        />
-      </svg>
+        <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-ink/40">Map</span>
+        <svg
+          width="10" height="10" viewBox="0 0 10 10" fill="none"
+          style={{
+            transform: collapsed ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform 0.25s ease',
+          }}
+        >
+          <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-ink/40" />
+        </svg>
+      </button>
+
+      {/* Map SVG — hidden when collapsed */}
+      <div style={{ opacity: collapsed ? 0 : 1, transition: 'opacity 0.2s ease', pointerEvents: collapsed ? 'none' : 'auto' }}>
+        <svg
+          ref={svgRef}
+          width={MAP_PX}
+          height={MAP_PX}
+          viewBox={`0 0 ${MAP_PX} ${MAP_PX}`}
+          style={{ display: 'block', touchAction: 'none' }}
+        >
+          {items.map((it) => {
+            const p = project(it.x, it.y);
+            return (
+              <rect
+                key={it.id}
+                x={p.x}
+                y={p.y}
+                width={Math.max(2, it.w * mapScale)}
+                height={Math.max(2, it.h * mapScale)}
+                rx={1.5}
+                fill={ITEM_TYPE_COLOR[it.type] || '#888'}
+                opacity={0.55}
+              />
+            );
+          })}
+          {/* Current viewport — draggable amber rect. */}
+          <rect
+            x={v.x}
+            y={v.y}
+            width={vw}
+            height={vh}
+            fill="rgba(217,116,53,0.10)"
+            stroke="#D97435"
+            strokeWidth={1.5}
+            rx={2}
+            style={{ cursor: draggingRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+            onPointerDown={onRectPointerDown}
+            onPointerMove={onRectPointerMove}
+            onPointerUp={onRectPointerUp}
+            onPointerCancel={onRectPointerUp}
+          />
+        </svg>
+      </div>
     </div>
   );
 }

@@ -146,11 +146,12 @@ export default function ItemView({
     <div
       data-item
       data-item-id={item.id}
-      className="group absolute"
+      className={`group absolute${selected ? ' animate-itemWiggle' : ''}`}
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
         zIndex: selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
+        filter: selected ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))' : undefined,
       }}
       onPointerDown={(e) => {
         if (!canDragFrom(e.target)) return;
