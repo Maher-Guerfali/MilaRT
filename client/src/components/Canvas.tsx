@@ -230,12 +230,13 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     setDragOver(false);
 
     // Storage → canvas: restore an item dragged out of the Storage drawer.
+    // We can't see stored items in `items` here (parent filters them out), so
+    // pass the cursor world coords and let the parent centre using the item's
+    // own w/h.
     const restoreId = e.dataTransfer.getData('application/milart-storage-restore');
     if (restoreId && onRestoreFromStorageAt) {
       const pos = toWorld(e.clientX, e.clientY);
-      // We can't see stored items in `items` here (parent filters them out),
-      // so use a sensible default size and let the caller keep the original.
-      onRestoreFromStorageAt(restoreId, pos.x - 109, pos.y - 74);
+      onRestoreFromStorageAt(restoreId, pos.x, pos.y);
       return;
     }
 
