@@ -188,10 +188,11 @@ export default function StrokeLayer({
         pointerEvents: drawMode ? 'auto' : 'none',
         touchAction: 'none',
         cursor: eraser && drawMode ? 'none' : 'crosshair',
-        // Strokes always sit above every item, even a freshly-selected
-        // image (which jumps to zIndex 100000+). Without this, clicking an
-        // image hides any pencil work drawn over it.
-        zIndex: 200000,
+        // Strokes sit just above the highest possible item z-index
+        // (selected items go to 100000 + item.z). Floating UI like the
+        // CanvasDock and DrawTray are bumped above this so they remain
+        // clickable while drawing.
+        zIndex: 150000,
       }}
       onPointerDown={onDown}
       onPointerMove={onMove}

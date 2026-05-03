@@ -31,7 +31,10 @@ export default function DrawTray(props: Props) {
   const sizeDisabled   = drawTool === 'select';
 
   return (
-    <div className="absolute bottom-0 left-0 right-0 z-40 flex justify-center pointer-events-none">
+    <div
+      className="absolute bottom-0 left-0 right-0 flex justify-center pointer-events-none"
+      style={{ zIndex: 180000 }}
+    >
       <div
         className="pointer-events-auto relative animate-trayUp"
         style={{

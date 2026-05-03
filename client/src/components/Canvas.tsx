@@ -439,11 +439,12 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       />
 
       <div
-        className="absolute bottom-[22px] right-4 z-20 rounded-[13px] border border-ink/10 flex items-center p-1 gap-px"
+        className="absolute bottom-[22px] right-4 rounded-[13px] border border-ink/10 flex items-center p-1 gap-px"
         style={{
           background: 'rgba(253,250,245,0.96)',
           backdropFilter: 'blur(14px)',
           boxShadow: '0 4px 18px rgba(26,21,16,0.09)',
+          zIndex: 180000,
         }}
         onPointerDown={(e) => e.stopPropagation()}
       >

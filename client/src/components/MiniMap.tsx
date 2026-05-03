@@ -83,11 +83,12 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
 
   return (
     <div
-      className="absolute right-4 z-20 rounded-2xl border border-ink/10 overflow-hidden"
+      className="absolute right-4 rounded-2xl border border-ink/10 overflow-hidden"
       style={{
         bottom: 64,
         width: MAP_PX,
         height: collapsed ? 28 : MAP_PX,
+        zIndex: 180000,
         background: 'rgba(253,250,245,0.96)',
         backdropFilter: 'blur(14px)',
         boxShadow: '0 4px 18px rgba(26,21,16,0.10)',

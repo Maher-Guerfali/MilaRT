@@ -84,11 +84,14 @@ export default function CanvasDock({
 
   return (
     <div
-      className="absolute top-[64px] right-[16px] z-20 rounded-2xl border border-ink/10 p-[5px] flex flex-col gap-[2px]"
+      className="absolute top-[64px] right-[16px] rounded-2xl border border-ink/10 p-[5px] flex flex-col gap-[2px]"
       style={{
         background: 'rgba(253,250,245,0.95)',
         backdropFilter: 'blur(14px)',
         boxShadow: '0 4px 20px rgba(26,21,16,0.10)',
+        // Stay above StrokeLayer (z 150000) so the Move button remains
+        // clickable while pencil mode is on.
+        zIndex: 180000,
       }}
     >
       <DockBtn Icon={HandIcon} label="Move" active={isMove && !drawOpen} onClick={onMove} />
