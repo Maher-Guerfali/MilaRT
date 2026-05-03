@@ -188,6 +188,10 @@ export default function StrokeLayer({
         pointerEvents: drawMode ? 'auto' : 'none',
         touchAction: 'none',
         cursor: eraser && drawMode ? 'none' : 'crosshair',
+        // Strokes always sit above every item, even a freshly-selected
+        // image (which jumps to zIndex 100000+). Without this, clicking an
+        // image hides any pencil work drawn over it.
+        zIndex: 200000,
       }}
       onPointerDown={onDown}
       onPointerMove={onMove}

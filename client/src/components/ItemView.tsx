@@ -350,14 +350,23 @@ function ImageBox({
     if (!selected) { setAiOpen(false); setAiPrompt(''); }
   }, [selected]);
 
-  // Opening the AI panel enters "extend mode": the image's current pixel
-  // box is locked into data.imgFrame so subsequent resizes grow white space
-  // around the image instead of stretching it. Stays sticky until the next
-  // successful regenerate (or manual exit) so the user can keep dragging
-  // the resize handle without re-clicking AI each time.
+  // Extend mode is tied to the AI panel:
+  //   - Opening the panel locks the image's current pixel box into
+  //     data.imgFrame so resizing grows white margins around it.
+  //   - Closing the panel (without a successful regenerate) drops the
+  //     extend canvas back to a plain image — resizing is normal again.
+  //   - A successful regenerate clears imgFrame from inside runAIEdit.
   useEffect(() => {
     if (aiOpen && currentUrl && !d.imgFrame) {
       onUpdate({ data: { ...d, imgFrame: { x: 0, y: 0, w: item.w, h: item.h } } });
+    } else if (!aiOpen && d.imgFrame) {
+      // Snap the bounding box back to the image so the user isn't left
+      // with a stretched image filling the white space they were
+      // experimenting with.
+      const f = d.imgFrame;
+      const next = { ...d } as Record<string, unknown>;
+      delete next.imgFrame;
+      onUpdate({ w: f.w, h: f.h, data: next });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiOpen]);
