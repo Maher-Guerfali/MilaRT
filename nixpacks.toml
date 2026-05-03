@@ -1,6 +1,6 @@
 # Explicit Railway/Nixpacks build recipe so the client `dist/` is always produced.
 [phases.setup]
-nixPkgs = ["nodejs_20", "npm-9_x"]
+nixPkgs = ["nodejs_20"]
 
 [phases.install]
 cmds = [
@@ -10,7 +10,7 @@ cmds = [
 ]
 
 [phases.build]
-cmds = ["npm --prefix client run build"]
+cmds = ["cd client && npx tsc -b && npx vite build"]
 
 [start]
 cmd = "node server/src/index.js"
