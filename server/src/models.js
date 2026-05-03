@@ -47,6 +47,9 @@ const RoomSchema = new Schema(
     code: { type: String, required: true, unique: true, index: true },
     name: { type: String, default: 'My room' },
     rootBoardId: { type: Types.ObjectId, ref: 'Board' },
+    // Room-wide "Storage" drawer — items live here independently of any
+    // board so they can be dragged from one board into another.
+    storage: { type: [ItemSchema], default: [] },
   },
   { timestamps: true }
 );

@@ -136,6 +136,25 @@ export function makeRoutes({ uploadDir }) {
     });
   });
 
+  // Read the room-wide Storage drawer.
+  r.get('/rooms/:code/storage', async (req, res) => {
+    const room = await findRoomByAnyCase(req.params.code);
+    if (!room) return res.status(404).json({ error: 'not_found' });
+    res.json({ storage: room.storage || [] });
+  });
+
+  // Replace the room-wide Storage drawer in one shot.
+  // Body: { storage: BaseItem[] }
+  r.put('/rooms/:code/storage', async (req, res) => {
+    const room = await findRoomByAnyCase(req.params.code);
+    if (!room) return res.status(404).json({ error: 'not_found' });
+    const { storage } = req.body || {};
+    if (!Array.isArray(storage)) return res.status(400).json({ error: 'invalid_storage' });
+    room.storage = storage;
+    await room.save();
+    res.json({ ok: true, storage: room.storage });
+  });
+
   // Delete a room and every board (and its items + strokes) that belongs to it.
   // Anyone with the room code can do this — same trust model as editing.
   r.delete('/rooms/:code', async (req, res) => {

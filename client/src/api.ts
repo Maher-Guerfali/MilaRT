@@ -18,6 +18,15 @@ export const api = {
 
   getRoom: (code: string) => req<Room>(`/api/rooms/${encodeURIComponent(code)}`),
 
+  getRoomStorage: (code: string) =>
+    req<{ storage: BaseItem[] }>(`/api/rooms/${encodeURIComponent(code)}/storage`),
+
+  saveRoomStorage: (code: string, storage: BaseItem[]) =>
+    req<{ ok: true; storage: BaseItem[] }>(`/api/rooms/${encodeURIComponent(code)}/storage`, {
+      method: 'PUT',
+      body: JSON.stringify({ storage }),
+    }),
+
   deleteRoom: (code: string) =>
     req<{ deleted: true; code: string }>(`/api/rooms/${encodeURIComponent(code)}`, { method: 'DELETE' }),
 

@@ -218,39 +218,58 @@ export default function BoardPage() {
     );
   }
 
-  // Storage: image/link items with data.stored === true don't render on the
-  // canvas; they live in the right-hand Storage drawer until the user
-  // restores them. (Filter is type-scoped so a stray stored=true on another
-  // type doesn't make the item disappear entirely.)
-  const isStored = (it: BaseItem) =>
-    Boolean((it.data as Record<string, unknown> | undefined)?.stored) &&
-    (it.type === 'image' || it.type === 'link');
-  const visibleItems = useMemo(() => items.filter((it) => !isStored(it)), [items]);
-  const storedItems = useMemo(() => items.filter(isStored), [items]);
+  // ── Storage (room-level, shared across boards) ─────────────────────
+  const [storedItems, setStoredItems] = useState<BaseItem[]>([]);
+
+  // Load room storage once we have a room code.
+  useEffect(() => {
+    if (!code) return;
+    let cancelled = false;
+    api.getRoomStorage(code).then((res) => {
+      if (!cancelled) setStoredItems(res.storage || []);
+    }).catch(() => { /* ignore — empty drawer */ });
+    return () => { cancelled = true; };
+  }, [code]);
+
+  // Debounce-save room storage whenever it changes (after the initial load).
+  const storageInitialRef = useRef(true);
+  useEffect(() => {
+    if (!code) return;
+    if (storageInitialRef.current) { storageInitialRef.current = false; return; }
+    const t = setTimeout(() => {
+      api.saveRoomStorage(code, storedItems).catch(() => { /* ignore */ });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [storedItems, code]);
 
   function sendToStorage(id: string) {
-    setItems((xs) =>
-      xs.map((it) =>
-        it.id === id
-          ? { ...it, data: { ...(it.data as object), stored: true } }
-          : it,
-      ),
-    );
+    const it = items.find((x) => x.id === id);
+    if (!it) return;
+    // Drop any per-board flags before storing (e.g. legacy stored:true)
+    // so the item is portable across boards.
+    const data = { ...(it.data as Record<string, unknown>) };
+    delete data.stored;
+    const portable: BaseItem = { ...it, data };
+    setItems((xs) => xs.filter((x) => x.id !== id));
+    setStoredItems((s) => [portable, ...s.filter((p) => p.id !== id)]);
   }
-  // x,y here is the world position the item should be centred on.
+
+  // cx,cy is the world position the item should be centred on.
   function restoreFromStorageAt(id: string, cx: number, cy: number) {
-    setItems((xs) =>
-      xs.map((it) => {
-        if (it.id !== id) return it;
-        const next = { ...(it.data as Record<string, unknown>) };
-        delete next.stored;
-        return { ...it, x: cx - it.w / 2, y: cy - it.h / 2, data: next, z: xs.length };
-      }),
-    );
+    const it = storedItems.find((p) => p.id === id);
+    if (!it) return;
+    setStoredItems((s) => s.filter((p) => p.id !== id));
+    setItems((xs) => [
+      ...xs,
+      { ...it, x: cx - it.w / 2, y: cy - it.h / 2, z: xs.length },
+    ]);
   }
   function restoreFromStorageCenter(id: string) {
     const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
     restoreFromStorageAt(id, c.x, c.y);
+  }
+  function deleteFromStorage(id: string) {
+    setStoredItems((s) => s.filter((p) => p.id !== id));
   }
   // Items are rendered in array order. Bringing forward = move toward end.
   function moveLayer(id: string, dir: 'forward' | 'backward') {
@@ -371,7 +390,7 @@ export default function BoardPage() {
 
         <Canvas
           ref={canvasRef}
-          items={visibleItems}
+          items={items}
           strokes={strokes}
           isMove={isMove}
           drawOpen={drawOpen}
@@ -425,7 +444,7 @@ export default function BoardPage() {
       <StoragePanel
         items={storedItems}
         onRestoreToCanvasCenter={restoreFromStorageCenter}
-        onDelete={deleteItem}
+        onDelete={deleteFromStorage}
       />
     </div>
   );

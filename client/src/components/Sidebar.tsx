@@ -140,9 +140,13 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
     },
     {
       label: 'Image',
-      hint: 'Drop or upload image',
+      hint: 'Tap to upload or drag a placeholder',
       Icon: ImageIcon,
-      action: () => { /* drag only — image upload via drag onto canvas */ },
+      // Drag: drop an empty image placeholder where the cursor is.
+      dragData: JSON.stringify(template({ type: 'image', w: 218, h: 148, data: { url: '' } })),
+      // Tap: open the file picker — selected file is uploaded and added to
+      // the canvas centre via onFile below.
+      action: () => fileRef.current?.click(),
     },
     {
       label: 'Link',
