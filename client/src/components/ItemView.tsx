@@ -431,51 +431,124 @@ function ImageBox({
         </div>
       )}
 
-      {/* Version history — small dots + arrows at top-right */}
+      {/* Version badge + panel */}
       {selected && versions.length > 1 && (
+        <VersionPanel
+          versions={versions}
+          currentIdx={currentIdx}
+          onSwitch={switchVersion}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Version history panel ──────────────────────────────────────────────────
+function VersionPanel({
+  versions, currentIdx, onSwitch,
+}: {
+  versions: string[];
+  currentIdx: number;
+  onSwitch: (idx: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Scroll the active thumbnail into view when panel opens
+  useEffect(() => {
+    if (open && listRef.current) {
+      const active = listRef.current.querySelector('[data-active="true"]') as HTMLElement | null;
+      active?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [open, currentIdx]);
+
+  const label = currentIdx === 0 ? 'orig' : `v${currentIdx}`;
+
+  return (
+    <>
+      {/* Badge button — sits at right edge of image, vertically centred */}
+      <button
+        data-no-item-drag
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        title="Version history"
+        className="absolute top-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-bold transition-all z-20"
+        style={{
+          right: -36,
+          background: open ? '#D97435' : 'rgba(253,250,245,0.95)',
+          color: open ? 'white' : '#D97435',
+          border: '1.5px solid rgba(217,116,53,0.35)',
+          boxShadow: '0 2px 8px rgba(26,21,16,0.12)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+        <svg width="7" height="7" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d={open ? 'M1 5l3-3 3 3' : 'M1 3l3 3 3-3'} />
+        </svg>
+      </button>
+
+      {/* Vertical scroll panel — floats to the right of the image */}
+      {open && (
         <div
           data-no-item-drag
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute top-2 right-2 flex items-center gap-1 rounded-full px-2 py-1 z-20"
-          style={{ background: 'rgba(253,250,245,0.92)', border: '1px solid rgba(26,21,16,0.10)', boxShadow: '0 2px 8px rgba(26,21,16,0.10)' }}
+          className="absolute top-0 bottom-0 rounded-2xl overflow-hidden z-30 flex flex-col"
+          style={{
+            right: -88,
+            width: 72,
+            background: 'rgba(253,250,245,0.97)',
+            border: '1px solid rgba(26,21,16,0.09)',
+            boxShadow: '0 8px 28px rgba(26,21,16,0.14)',
+          }}
         >
-          <button
-            onClick={(e) => { e.stopPropagation(); switchVersion(Math.max(0, currentIdx - 1)); }}
-            disabled={currentIdx === 0}
-            className="w-4 h-4 flex items-center justify-center text-ink/50 hover:text-ink disabled:opacity-25 transition-colors"
+          {/* Header */}
+          <div className="px-2 pt-2 pb-1 text-[8px] font-bold uppercase tracking-widest text-ink/35 text-center shrink-0">
+            Versions
+          </div>
+
+          {/* Scrollable thumbnail list */}
+          <div
+            ref={listRef}
+            className="flex-1 overflow-y-auto flex flex-col items-center gap-1.5 px-1.5 pb-2"
+            style={{ scrollbarWidth: 'none' }}
           >
-            <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 1L2 4l3 3" />
-            </svg>
-          </button>
-          {versions.map((_, i) => (
-            <button
-              key={i}
-              onClick={(e) => { e.stopPropagation(); switchVersion(i); }}
-              title={i === 0 ? 'Original' : `AI edit ${i}`}
-              className="transition-all rounded-full"
-              style={{
-                width: i === currentIdx ? 7 : 5,
-                height: i === currentIdx ? 7 : 5,
-                background: i === currentIdx ? '#D97435' : 'rgba(26,21,16,0.25)',
-              }}
-            />
-          ))}
-          <button
-            onClick={(e) => { e.stopPropagation(); switchVersion(Math.min(versions.length - 1, currentIdx + 1)); }}
-            disabled={currentIdx === versions.length - 1}
-            className="w-4 h-4 flex items-center justify-center text-ink/50 hover:text-ink disabled:opacity-25 transition-colors"
-          >
-            <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 1l3 3-3 3" />
-            </svg>
-          </button>
-          <span className="text-[9px] text-ink/40 font-medium ml-0.5">
-            {currentIdx === 0 ? 'orig' : `v${currentIdx}`}
-          </span>
+            {versions.map((url, i) => (
+              <button
+                key={i}
+                data-active={i === currentIdx ? 'true' : 'false'}
+                onClick={(e) => { e.stopPropagation(); onSwitch(i); }}
+                className="w-full shrink-0 rounded-lg overflow-hidden transition-all relative"
+                style={{
+                  aspectRatio: '1',
+                  outline: i === currentIdx ? '2px solid #D97435' : '1.5px solid rgba(26,21,16,0.08)',
+                  outlineOffset: i === currentIdx ? 1 : 0,
+                  opacity: i === currentIdx ? 1 : 0.65,
+                  transform: i === currentIdx ? 'scale(1.05)' : 'scale(1)',
+                }}
+                title={i === 0 ? 'Original' : `AI edit ${i}`}
+              >
+                <img
+                  src={url}
+                  alt={i === 0 ? 'Original' : `v${i}`}
+                  draggable={false}
+                  className="w-full h-full object-cover"
+                />
+                <span
+                  className="absolute bottom-0.5 right-0.5 text-[7px] font-bold rounded px-0.5 leading-tight"
+                  style={{
+                    background: i === currentIdx ? '#D97435' : 'rgba(26,21,16,0.45)',
+                    color: 'white',
+                  }}
+                >
+                  {i === 0 ? 'orig' : `v${i}`}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
