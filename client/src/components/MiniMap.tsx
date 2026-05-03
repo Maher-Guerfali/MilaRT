@@ -96,6 +96,7 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
     >
       {/* Header bar — always visible, click to toggle */}
       <button
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={() => setCollapsed(c => !c)}
         className="absolute top-0 left-0 right-0 h-7 flex items-center justify-between px-2 hover:bg-ink/5 transition-colors z-10"
         style={{ cursor: 'pointer' }}

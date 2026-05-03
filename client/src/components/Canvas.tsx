@@ -352,8 +352,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       onPointerCancel={onBgPointerUp}
       onContextMenu={(e) => e.preventDefault()}
       onWheel={onWheel}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOver(true); }}
+      onDragLeave={(e) => { if (!wrapRef.current?.contains(e.relatedTarget as Node)) setDragOver(false); }}
       onDrop={onDrop}
     >
       <div
@@ -430,6 +430,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
           backdropFilter: 'blur(14px)',
           boxShadow: '0 4px 18px rgba(26,21,16,0.09)',
         }}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         <button
           onClick={() => bumpZoom(-0.15)}
