@@ -17,6 +17,7 @@ interface Props {
   onDelete: () => void;
   onEnterBoard: () => void;
   onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
+  onSendToStorage?: (id: string) => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -38,6 +39,7 @@ function youTubeId(raw: string): string | null {
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
+  onSendToStorage,
 }: Props) {
   // Drag-tracking. `wasSelected` records whether the item was already
   // selected at press time, which lets endDrag distinguish "this press
@@ -114,12 +116,28 @@ export default function ItemView({
     const d = dragRef.current;
     if (!d) return;
     const finalBox = ghost ?? { x: d.ix, y: d.iy, w: d.iw, h: d.ih };
-    if (d.mode === 'move') onUpdate({ x: finalBox.x, y: finalBox.y });
-    else onUpdate({ w: finalBox.w, h: finalBox.h });
+
+    // Drop-on-storage: if the pointer is released over the Storage drawer,
+    // send the item there instead of committing the move.
+    let droppedToStorage = false;
+    if (d.mode === 'move' && d.moved && onSendToStorage &&
+        (item.type === 'image' || item.type === 'link')) {
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      if (el?.closest('[data-storage-drop="true"]')) {
+        onSendToStorage(item.id);
+        droppedToStorage = true;
+      }
+    }
+
+    if (!droppedToStorage) {
+      if (d.mode === 'move') onUpdate({ x: finalBox.x, y: finalBox.y });
+      else onUpdate({ w: finalBox.w, h: finalBox.h });
+    }
     dragRef.current = null;
     lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (droppedToStorage) return;
 
     // Click-to-activate. Only fires when:
     //   - this was a press, not a drag (no movement),
@@ -216,6 +234,20 @@ export default function ItemView({
               </button>
             </>
           )}
+          {(item.type === 'image' || item.type === 'link') && onSendToStorage && (
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onSendToStorage(item.id); }}
+              title="Send to storage"
+              className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 8 12 3 3 8v8l9 5 9-5z" />
+                <path d="M3 8l9 5 9-5" />
+                <path d="M12 13v8" />
+              </svg>
+            </button>
+          )}
           <button
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -289,6 +321,8 @@ function Sticky({
   );
 }
 
+type ImgFrame = { x: number; y: number; w: number; h: number };
+
 function ImageBox({
   item, selected, strokes, view, onUpdate,
 }: {
@@ -296,10 +330,15 @@ function ImageBox({
   strokes: Stroke[]; view: { x: number; y: number; scale: number };
   onUpdate: (p: Partial<BaseItem>) => void;
 }) {
-  const d = item.data as Partial<ImageData> & { versions?: string[] };
+  const d = item.data as Partial<ImageData> & {
+    versions?: string[];
+    imgFrame?: ImgFrame;
+  };
   const versions: string[] = d.versions ?? (d.url ? [d.url] : []);
   const currentUrl = d.url ?? null;
   const currentIdx = currentUrl ? Math.max(0, versions.lastIndexOf(currentUrl)) : 0;
+  const inExtendMode = !!d.imgFrame;
+  const frame: ImgFrame = d.imgFrame ?? { x: 0, y: 0, w: item.w, h: item.h };
 
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -310,6 +349,25 @@ function ImageBox({
   useEffect(() => {
     if (!selected) { setAiOpen(false); setAiPrompt(''); }
   }, [selected]);
+
+  // Opening the AI panel enters "extend mode": the image's current pixel
+  // box is locked into data.imgFrame so subsequent resizes grow white space
+  // around the image instead of stretching it. Stays sticky until the next
+  // successful regenerate (or manual exit) so the user can keep dragging
+  // the resize handle without re-clicking AI each time.
+  useEffect(() => {
+    if (aiOpen && currentUrl && !d.imgFrame) {
+      onUpdate({ data: { ...d, imgFrame: { x: 0, y: 0, w: item.w, h: item.h } } });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiOpen]);
+
+  function exitExtendMode() {
+    if (!d.imgFrame) return;
+    const next = { ...d };
+    delete next.imgFrame;
+    onUpdate({ data: next });
+  }
 
   useEffect(() => {
     if (aiLoading) {
@@ -325,13 +383,18 @@ function ImageBox({
     if (!aiPrompt.trim() || aiLoading) return;
     setAiLoading(true);
     try {
-      // 1. Render the image + any overlapping strokes onto an offscreen canvas
+      // 1. Render the (possibly extended) image + overlapping strokes onto a
+      //    square PNG. White areas around the image are sent to the model so
+      //    it can outpaint into them.
       const dataUrl = await captureItemWithStrokes(item, strokes, view);
       // 2. Send to server → OpenAI
       const result = await api.aiImageEdit(dataUrl, aiPrompt.trim());
-      // 3. Push new URL into version list and make it current
+      // 3. Push new URL into version list, drop extend mode (the new image
+      //    fills the whole bounds), and clear the prompt UI.
       const newVersions = [...versions, result.url];
-      onUpdate({ data: { ...d, url: result.url, versions: newVersions } });
+      const nextData = { ...d, url: result.url, versions: newVersions };
+      delete (nextData as Record<string, unknown>).imgFrame;
+      onUpdate({ data: nextData });
       setAiOpen(false);
       setAiPrompt('');
     } catch (e) {
@@ -365,14 +428,57 @@ function ImageBox({
 
   return (
     <div className="w-full h-full relative">
-      {/* Main image */}
-      <img
-        src={currentUrl}
-        alt=""
-        draggable={false}
-        className="w-full h-full object-cover rounded-2xl pointer-events-none"
-        style={{ boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)' }}
-      />
+      {inExtendMode ? (
+        <div
+          className="absolute inset-0 rounded-2xl overflow-hidden"
+          style={{
+            background: '#ffffff',
+            boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)',
+            outline: '2px dashed rgba(217,116,53,0.55)',
+            outlineOffset: -2,
+          }}
+        >
+          <img
+            src={currentUrl}
+            alt=""
+            draggable={false}
+            className="absolute pointer-events-none"
+            style={{
+              left: frame.x,
+              top: frame.y,
+              width: frame.w,
+              height: frame.h,
+              objectFit: 'cover',
+            }}
+          />
+          {/* Extend-mode badge + exit */}
+          <div
+            data-no-item-drag
+            className="absolute top-2 left-2 flex items-center gap-1 px-2 py-[3px] rounded-full text-[9px] font-bold uppercase tracking-[0.05em] z-20"
+            style={{
+              background: 'rgba(217,116,53,0.95)',
+              color: 'white',
+              boxShadow: '0 2px 8px rgba(26,21,16,0.18)',
+            }}
+          >
+            <span>Extend</span>
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); exitExtendMode(); }}
+              title="Exit extend mode (keep image at current size)"
+              className="ml-0.5 w-3.5 h-3.5 rounded-full bg-white/30 hover:bg-white/55 flex items-center justify-center text-white text-[9px] leading-none"
+            >×</button>
+          </div>
+        </div>
+      ) : (
+        <img
+          src={currentUrl}
+          alt=""
+          draggable={false}
+          className="w-full h-full object-cover rounded-2xl pointer-events-none"
+          style={{ boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)' }}
+        />
+      )}
 
       {/* AI edit button — bottom-left, visible when selected */}
       {selected && !aiLoading && (
@@ -567,20 +673,31 @@ async function captureItemWithStrokes(
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, SIZE, SIZE);
 
-  const d = item.data as Partial<ImageData>;
+  const d = item.data as Partial<ImageData> & { imgFrame?: { x: number; y: number; w: number; h: number } };
   const url = d.url;
 
-  // Draw the image
+  // Map the item's bounding box → the SIZE×SIZE square (letterbox if needed),
+  // then draw the image at its imgFrame inside that mapping. In normal mode
+  // (no imgFrame) the image fills the whole bounding box, matching the
+  // previous behaviour.
+  const itemAR = item.w / item.h;
+  let boxX = 0, boxY = 0, boxW = SIZE, boxH = SIZE;
+  if (itemAR > 1) { boxH = SIZE / itemAR; boxY = (SIZE - boxH) / 2; }
+  else if (itemAR < 1) { boxW = SIZE * itemAR; boxX = (SIZE - boxW) / 2; }
+  const sx = boxW / item.w;
+  const sy = boxH / item.h;
+
+  const frame = d.imgFrame ?? { x: 0, y: 0, w: item.w, h: item.h };
+
   if (url) {
     await new Promise<void>((resolve) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        // Letterbox into square
-        const ar = img.naturalWidth / img.naturalHeight;
-        let dx = 0, dy = 0, dw = SIZE, dh = SIZE;
-        if (ar > 1) { dh = SIZE / ar; dy = (SIZE - dh) / 2; }
-        else        { dw = SIZE * ar; dx = (SIZE - dw) / 2; }
+        const dx = boxX + frame.x * sx;
+        const dy = boxY + frame.y * sy;
+        const dw = frame.w * sx;
+        const dh = frame.h * sy;
         ctx.drawImage(img, dx, dy, dw, dh);
         resolve();
       };
@@ -599,12 +716,10 @@ async function captureItemWithStrokes(
   });
 
   if (overlapping.length > 0) {
-    // Scale factor: world coords → canvas pixels
-    const scaleX = SIZE / item.w;
-    const scaleY = SIZE / item.h;
+    // Map world coords → the (boxX, boxY, boxW, boxH) sub-rect inside SIZE.
     ctx.save();
-    ctx.translate(-item.x * scaleX, -item.y * scaleY);
-    ctx.scale(scaleX, scaleY);
+    ctx.translate(boxX - item.x * sx, boxY - item.y * sy);
+    ctx.scale(sx, sy);
     for (const s of overlapping) {
       if (s.points.length < 3) continue;
       ctx.beginPath();

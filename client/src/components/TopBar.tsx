@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 interface Props {
@@ -13,33 +13,15 @@ interface Props {
 
 // Slim 46px top bar pinned across the canvas area.
 // Left:  parent-board breadcrumbs + inline-renamable current board name
-// Right: AI input toggle + saving indicator + room badge
-export default function TopBar({ roomCode, crumbs, currentName, saving, onRename, onAISubmit, aiLoading }: Props) {
+// Right: saving indicator + room badge
+export default function TopBar({ roomCode, crumbs, currentName, saving, onRename }: Props) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(currentName);
-  const [aiOpen, setAiOpen] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const aiInputRef = useRef<HTMLInputElement>(null);
   const parents = crumbs.slice(0, -1);
 
   function commit() {
     setEditing(false);
     if (val.trim() && val !== currentName) onRename(val.trim());
-  }
-
-  function submitAI() {
-    const p = aiPrompt.trim();
-    if (!p || aiLoading) return;
-    onAISubmit(p);
-    setAiPrompt('');
-    setAiOpen(false);
-  }
-
-  function toggleAI() {
-    setAiOpen((o) => {
-      if (!o) setTimeout(() => aiInputRef.current?.focus(), 50);
-      return !o;
-    });
   }
 
   return (
@@ -90,15 +72,6 @@ export default function TopBar({ roomCode, crumbs, currentName, saving, onRename
         >{roomCode}</div>
       </div>
     </div>
-  );
-}
-
-function SparkleIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.636 5.636l2.122 2.122M16.243 16.243l2.121 2.121M5.636 18.364l2.122-2.121M16.243 7.757l2.121-2.121" />
-    </svg>
   );
 }
 

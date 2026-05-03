@@ -10,6 +10,7 @@ import DrawTray, { type DrawTool, type SizeKey } from '../components/DrawTray';
 import SettingsModal from '../components/SettingsModal';
 import TutorialModal from '../components/TutorialModal';
 import AIPreviewModal from '../components/AIPreviewModal';
+import StoragePanel from '../components/StoragePanel';
 import { useHistory } from '../hooks/useHistory';
 
 interface Snap {
@@ -216,6 +217,41 @@ export default function BoardPage() {
       )
     );
   }
+
+  // Storage: image/link items with data.stored === true don't render on the
+  // canvas; they live in the right-hand Storage drawer until the user
+  // restores them. (Filter is type-scoped so a stray stored=true on another
+  // type doesn't make the item disappear entirely.)
+  const isStored = (it: BaseItem) =>
+    Boolean((it.data as Record<string, unknown> | undefined)?.stored) &&
+    (it.type === 'image' || it.type === 'link');
+  const visibleItems = useMemo(() => items.filter((it) => !isStored(it)), [items]);
+  const storedItems = useMemo(() => items.filter(isStored), [items]);
+
+  function sendToStorage(id: string) {
+    setItems((xs) =>
+      xs.map((it) =>
+        it.id === id
+          ? { ...it, data: { ...(it.data as object), stored: true } }
+          : it,
+      ),
+    );
+  }
+  // x,y here is the world position the item should be centred on.
+  function restoreFromStorageAt(id: string, cx: number, cy: number) {
+    setItems((xs) =>
+      xs.map((it) => {
+        if (it.id !== id) return it;
+        const next = { ...(it.data as Record<string, unknown>) };
+        delete next.stored;
+        return { ...it, x: cx - it.w / 2, y: cy - it.h / 2, data: next, z: xs.length };
+      }),
+    );
+  }
+  function restoreFromStorageCenter(id: string) {
+    const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
+    restoreFromStorageAt(id, c.x, c.y);
+  }
   // Items are rendered in array order. Bringing forward = move toward end.
   function moveLayer(id: string, dir: 'forward' | 'backward') {
     setItems((xs) => {
@@ -335,7 +371,7 @@ export default function BoardPage() {
 
         <Canvas
           ref={canvasRef}
-          items={items}
+          items={visibleItems}
           strokes={strokes}
           isMove={isMove}
           drawOpen={drawOpen}
@@ -353,6 +389,8 @@ export default function BoardPage() {
           onAddStroke={addStroke}
           onMoveLayer={moveLayer}
           onEnterBoard={enterBoard}
+          onSendToStorage={sendToStorage}
+          onRestoreFromStorageAt={restoreFromStorageAt}
         />
 
         <CanvasDock
@@ -383,6 +421,12 @@ export default function BoardPage() {
           onClose={() => { setDrawOpen(false); setIsMove(true); }}
         />
       </div>
+
+      <StoragePanel
+        items={storedItems}
+        onRestoreToCanvasCenter={restoreFromStorageCenter}
+        onDelete={deleteItem}
+      />
     </div>
   );
 }
