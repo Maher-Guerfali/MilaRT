@@ -17,6 +17,7 @@ interface Props {
   onDelete: () => void;
   onEnterBoard: () => void;
   onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
+  onSendToStorage?: (id: string) => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -38,6 +39,7 @@ function youTubeId(raw: string): string | null {
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
+  onSendToStorage,
 }: Props) {
   // Drag-tracking. `wasSelected` records whether the item was already
   // selected at press time, which lets endDrag distinguish "this press
@@ -114,12 +116,28 @@ export default function ItemView({
     const d = dragRef.current;
     if (!d) return;
     const finalBox = ghost ?? { x: d.ix, y: d.iy, w: d.iw, h: d.ih };
-    if (d.mode === 'move') onUpdate({ x: finalBox.x, y: finalBox.y });
-    else onUpdate({ w: finalBox.w, h: finalBox.h });
+
+    // Drop-on-storage: if the pointer is released over the Storage drawer,
+    // send the item there instead of committing the move.
+    let droppedToStorage = false;
+    if (d.mode === 'move' && d.moved && onSendToStorage &&
+        (item.type === 'image' || item.type === 'link')) {
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      if (el?.closest('[data-storage-drop="true"]')) {
+        onSendToStorage(item.id);
+        droppedToStorage = true;
+      }
+    }
+
+    if (!droppedToStorage) {
+      if (d.mode === 'move') onUpdate({ x: finalBox.x, y: finalBox.y });
+      else onUpdate({ w: finalBox.w, h: finalBox.h });
+    }
     dragRef.current = null;
     lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (droppedToStorage) return;
 
     // Click-to-activate. Only fires when:
     //   - this was a press, not a drag (no movement),
@@ -215,6 +233,20 @@ export default function ItemView({
                 </svg>
               </button>
             </>
+          )}
+          {(item.type === 'image' || item.type === 'link') && onSendToStorage && (
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onSendToStorage(item.id); }}
+              title="Send to storage"
+              className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 8 12 3 3 8v8l9 5 9-5z" />
+                <path d="M3 8l9 5 9-5" />
+                <path d="M12 13v8" />
+              </svg>
+            </button>
           )}
           <button
             onPointerDown={(e) => e.stopPropagation()}

@@ -27,6 +27,8 @@ interface Props {
   onAddStroke: (s: Stroke) => void;
   onMoveLayer: (id: string, dir: 'forward' | 'backward') => void;
   onEnterBoard: (itemId: string) => void;
+  onSendToStorage?: (id: string) => void;
+  onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
 }
 
 export interface CanvasHandle {
@@ -50,6 +52,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
+    onSendToStorage, onRestoreFromStorageAt,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -226,6 +229,16 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     e.preventDefault();
     setDragOver(false);
 
+    // Storage → canvas: restore an item dragged out of the Storage drawer.
+    const restoreId = e.dataTransfer.getData('application/milart-storage-restore');
+    if (restoreId && onRestoreFromStorageAt) {
+      const pos = toWorld(e.clientX, e.clientY);
+      // We can't see stored items in `items` here (parent filters them out),
+      // so use a sensible default size and let the caller keep the original.
+      onRestoreFromStorageAt(restoreId, pos.x - 109, pos.y - 74);
+      return;
+    }
+
     // Sidebar item drag-to-place
     const itemJson = e.dataTransfer.getData('application/milart-item');
     if (itemJson) {
@@ -376,6 +389,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onDelete={() => onDelete(it.id)}
             onEnterBoard={() => onEnterBoard(it.id)}
             onMoveLayer={onMoveLayer}
+            onSendToStorage={onSendToStorage}
           />
         ))}
       </div>
