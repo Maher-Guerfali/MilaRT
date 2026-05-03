@@ -110,4 +110,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ items, prompt }),
     }),
+
+  /** Image-to-image edit: send a PNG data URL + prompt, get back an edited image URL. */
+  aiImageEdit: (imageDataUrl: string, prompt: string) =>
+    req<{ url: string }>('/api/ai/image-edit', {
+      method: 'POST',
+      body: JSON.stringify({ imageDataUrl, prompt }),
+    }),
 };

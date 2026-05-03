@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData } from '../types';
+import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, Stroke } from '../types';
 import { api } from '../api';
 import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon } from './icons';
 
@@ -9,6 +9,8 @@ interface Props {
   selectionIds: string[];
   scale: number;
   interactive: boolean;
+  strokes: Stroke[];
+  view: { x: number; y: number; scale: number };
   onSelect: (additive: boolean) => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
@@ -34,7 +36,7 @@ function youTubeId(raw: string): string | null {
 }
 
 export default function ItemView({
-  item, selected, selectionIds, scale, interactive,
+  item, selected, selectionIds, scale, interactive, strokes, view,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
 }: Props) {
   // Drag-tracking. `wasSelected` records whether the item was already
@@ -164,7 +166,9 @@ export default function ItemView({
       {item.type === 'sticky' && (
         <Sticky item={item} selected={selected} editing={editing} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
-      {item.type === 'image' && <ImageBox item={item} selected={selected} />}
+      {item.type === 'image' && (
+        <ImageBox item={item} selected={selected} strokes={strokes} view={view} onUpdate={onUpdate} />
+      )}
       {item.type === 'link' && (
         <TextOrLink item={item} selected={selected} editing={editing} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
@@ -285,9 +289,65 @@ function Sticky({
   );
 }
 
-function ImageBox({ item, selected }: { item: BaseItem; selected: boolean }) {
-  const d = item.data as Partial<ImageData>;
-  if (!d.url) {
+function ImageBox({
+  item, selected, strokes, view, onUpdate,
+}: {
+  item: BaseItem; selected: boolean;
+  strokes: Stroke[]; view: { x: number; y: number; scale: number };
+  onUpdate: (p: Partial<BaseItem>) => void;
+}) {
+  const d = item.data as Partial<ImageData> & { versions?: string[] };
+  const versions: string[] = d.versions ?? (d.url ? [d.url] : []);
+  const currentUrl = d.url ?? null;
+  const currentIdx = currentUrl ? Math.max(0, versions.lastIndexOf(currentUrl)) : 0;
+
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!selected) { setAiOpen(false); setAiPrompt(''); }
+  }, [selected]);
+
+  useEffect(() => {
+    if (aiLoading) {
+      setElapsed(0);
+      timerRef.current = setInterval(() => setElapsed((n) => n + 1), 1000);
+    } else {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [aiLoading]);
+
+  async function runAIEdit() {
+    if (!aiPrompt.trim() || aiLoading) return;
+    setAiLoading(true);
+    try {
+      // 1. Render the image + any overlapping strokes onto an offscreen canvas
+      const dataUrl = await captureItemWithStrokes(item, strokes, view);
+      // 2. Send to server → OpenAI
+      const result = await api.aiImageEdit(dataUrl, aiPrompt.trim());
+      // 3. Push new URL into version list and make it current
+      const newVersions = [...versions, result.url];
+      onUpdate({ data: { ...d, url: result.url, versions: newVersions } });
+      setAiOpen(false);
+      setAiPrompt('');
+    } catch (e) {
+      alert(`AI edit failed: ${(e as Error).message}`);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function switchVersion(idx: number) {
+    const url = versions[idx];
+    if (!url) return;
+    onUpdate({ data: { ...d, url, versions } });
+  }
+
+  if (!currentUrl) {
     return (
       <div
         className="w-full h-full rounded-2xl flex flex-col items-center justify-center gap-2 text-ink/50"
@@ -302,14 +362,201 @@ function ImageBox({ item, selected }: { item: BaseItem; selected: boolean }) {
       </div>
     );
   }
+
   return (
-    <img
-      src={d.url}
-      alt=""
-      draggable={false}
-      className="w-full h-full object-cover rounded-2xl pointer-events-none"
-      style={{ boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)' }}
-    />
+    <div className="w-full h-full relative">
+      {/* Main image */}
+      <img
+        src={currentUrl}
+        alt=""
+        draggable={false}
+        className="w-full h-full object-cover rounded-2xl pointer-events-none"
+        style={{ boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)' }}
+      />
+
+      {/* AI edit button — bottom-left, visible when selected */}
+      {selected && !aiLoading && (
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); setAiOpen((o) => !o); }}
+          title="Edit with AI"
+          className="absolute bottom-2 left-2 w-7 h-7 rounded-full flex items-center justify-center shadow-md transition-all z-20"
+          style={{
+            background: aiOpen ? '#D97435' : 'rgba(253,250,245,0.95)',
+            color: aiOpen ? 'white' : '#D97435',
+            border: '1.5px solid rgba(217,116,53,0.35)',
+          }}
+        >
+          <AIBrushIcon />
+        </button>
+      )}
+
+      {/* Timer badge while generating */}
+      {aiLoading && (
+        <div
+          className="absolute bottom-2 left-2 px-2 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1 z-20"
+          style={{ background: '#D97435' }}
+        >
+          <span className="animate-pulse">✦</span>
+          <span>{elapsed}s</span>
+        </div>
+      )}
+
+      {/* AI prompt panel */}
+      {aiOpen && selected && !aiLoading && (
+        <div
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute bottom-10 left-0 right-0 mx-2 rounded-xl p-2 flex gap-1.5 z-30"
+          style={{ background: 'rgba(253,250,245,0.97)', boxShadow: '0 4px 18px rgba(26,21,16,0.15)', border: '1px solid rgba(26,21,16,0.08)' }}
+        >
+          <input
+            autoFocus
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runAIEdit(); if (e.key === 'Escape') setAiOpen(false); }}
+            placeholder="Describe the edit…"
+            className="flex-1 min-w-0 text-[11px] bg-transparent outline-none text-ink placeholder:text-ink/35"
+            style={{ fontFamily: 'inherit' }}
+          />
+          <button
+            onClick={runAIEdit}
+            disabled={!aiPrompt.trim()}
+            className="h-6 px-2.5 rounded-lg text-[10px] font-bold text-white transition-all disabled:opacity-40 shrink-0"
+            style={{ background: '#D97435' }}
+          >
+            Go
+          </button>
+        </div>
+      )}
+
+      {/* Version history — small dots + arrows at top-right */}
+      {selected && versions.length > 1 && (
+        <div
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute top-2 right-2 flex items-center gap-1 rounded-full px-2 py-1 z-20"
+          style={{ background: 'rgba(253,250,245,0.92)', border: '1px solid rgba(26,21,16,0.10)', boxShadow: '0 2px 8px rgba(26,21,16,0.10)' }}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); switchVersion(Math.max(0, currentIdx - 1)); }}
+            disabled={currentIdx === 0}
+            className="w-4 h-4 flex items-center justify-center text-ink/50 hover:text-ink disabled:opacity-25 transition-colors"
+          >
+            <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 1L2 4l3 3" />
+            </svg>
+          </button>
+          {versions.map((_, i) => (
+            <button
+              key={i}
+              onClick={(e) => { e.stopPropagation(); switchVersion(i); }}
+              title={i === 0 ? 'Original' : `AI edit ${i}`}
+              className="transition-all rounded-full"
+              style={{
+                width: i === currentIdx ? 7 : 5,
+                height: i === currentIdx ? 7 : 5,
+                background: i === currentIdx ? '#D97435' : 'rgba(26,21,16,0.25)',
+              }}
+            />
+          ))}
+          <button
+            onClick={(e) => { e.stopPropagation(); switchVersion(Math.min(versions.length - 1, currentIdx + 1)); }}
+            disabled={currentIdx === versions.length - 1}
+            className="w-4 h-4 flex items-center justify-center text-ink/50 hover:text-ink disabled:opacity-25 transition-colors"
+          >
+            <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 1l3 3-3 3" />
+            </svg>
+          </button>
+          <span className="text-[9px] text-ink/40 font-medium ml-0.5">
+            {currentIdx === 0 ? 'orig' : `v${currentIdx}`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Canvas capture helper ──────────────────────────────────────────────────
+// Renders the image item + any strokes that overlap it into a square PNG.
+async function captureItemWithStrokes(
+  item: BaseItem,
+  strokes: Stroke[],
+  _view: { x: number; y: number; scale: number },
+): Promise<string> {
+  const SIZE = 1024;
+  const canvas = document.createElement('canvas');
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  const d = item.data as Partial<ImageData>;
+  const url = d.url;
+
+  // Draw the image
+  if (url) {
+    await new Promise<void>((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        // Letterbox into square
+        const ar = img.naturalWidth / img.naturalHeight;
+        let dx = 0, dy = 0, dw = SIZE, dh = SIZE;
+        if (ar > 1) { dh = SIZE / ar; dy = (SIZE - dh) / 2; }
+        else        { dw = SIZE * ar; dx = (SIZE - dw) / 2; }
+        ctx.drawImage(img, dx, dy, dw, dh);
+        resolve();
+      };
+      img.onerror = () => resolve();
+      img.src = url;
+    });
+  }
+
+  // Draw strokes that overlap the item bounding box
+  const overlapping = strokes.filter((s) => {
+    for (let i = 0; i < s.points.length; i += 3) {
+      const wx = s.points[i], wy = s.points[i + 1];
+      if (wx >= item.x && wx <= item.x + item.w && wy >= item.y && wy <= item.y + item.h) return true;
+    }
+    return false;
+  });
+
+  if (overlapping.length > 0) {
+    // Scale factor: world coords → canvas pixels
+    const scaleX = SIZE / item.w;
+    const scaleY = SIZE / item.h;
+    ctx.save();
+    ctx.translate(-item.x * scaleX, -item.y * scaleY);
+    ctx.scale(scaleX, scaleY);
+    for (const s of overlapping) {
+      if (s.points.length < 3) continue;
+      ctx.beginPath();
+      ctx.strokeStyle = s.color || '#000000';
+      ctx.lineWidth = (s.width || 2);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.moveTo(s.points[0], s.points[1]);
+      for (let i = 3; i < s.points.length; i += 3) {
+        ctx.lineTo(s.points[i], s.points[i + 1]);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+function AIBrushIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.636 5.636l2.122 2.122M16.243 16.243l2.121 2.121M5.636 18.364l2.122-2.121M16.243 7.757l2.121-2.121" />
+    </svg>
   );
 }
 

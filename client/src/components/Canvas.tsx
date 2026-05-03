@@ -368,6 +368,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             selectionIds={Array.from(selection)}
             scale={view.scale}
             interactive={interactive}
+            strokes={strokes}
+            view={view}
             onSelect={(additive) => selectItem(it.id, additive)}
             onUpdate={(patch) => onUpdate(it.id, patch)}
             onMoveGroup={moveGroup}

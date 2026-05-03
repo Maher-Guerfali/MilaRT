@@ -364,6 +364,77 @@ Return operations even if the request has no effect (empty array is valid).`;
     }
   });
 
+  // ── AI image editing (image-to-image) ─────────────────────────────
+  // POST /api/ai/image-edit
+  // Body: { imageDataUrl: string (base64 PNG), prompt: string }
+  // Returns: { url: string } — a newly uploaded image URL
+  r.post('/ai/image-edit', async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
+    }
+    const { imageDataUrl, prompt } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') return res.status(400).json({ error: 'missing prompt' });
+    if (!imageDataUrl || typeof imageDataUrl !== 'string') return res.status(400).json({ error: 'missing imageDataUrl' });
+
+    // Strip data URL prefix and decode to buffer
+    const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/s);
+    if (!match) return res.status(400).json({ error: 'invalid imageDataUrl' });
+    const [, , b64] = match;
+    const imageBuffer = Buffer.from(b64, 'base64');
+
+    try {
+      // Build multipart form for OpenAI /v1/images/edits
+      const { FormData, Blob } = await import('node:buffer').then(() => globalThis);
+      const formData = new FormData();
+      formData.append('model', 'gpt-image-1');
+      formData.append('prompt', prompt.trim().slice(0, 1000));
+      formData.append('n', '1');
+      formData.append('size', '1024x1024');
+      // image field must be a File/Blob with a .png filename
+      const blob = new Blob([imageBuffer], { type: 'image/png' });
+      formData.append('image', blob, 'image.png');
+
+      const aiRes = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: formData,
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text().catch(() => '');
+        console.error('[ai/image-edit] OpenAI error:', aiRes.status, errText.slice(0, 300));
+        return res.status(502).json({ error: `OpenAI error ${aiRes.status}`, detail: errText.slice(0, 300) });
+      }
+
+      const aiData = await aiRes.json();
+      // gpt-image-1 returns b64_json by default
+      const b64Result = aiData?.data?.[0]?.b64_json;
+      const urlResult = aiData?.data?.[0]?.url;
+
+      let resultBuffer, resultMime = 'image/png';
+      if (b64Result) {
+        resultBuffer = Buffer.from(b64Result, 'base64');
+      } else if (urlResult) {
+        // Fetch the URL and re-upload
+        const imgRes = await fetch(urlResult);
+        resultBuffer = Buffer.from(await imgRes.arrayBuffer());
+        resultMime = imgRes.headers.get('content-type') || 'image/png';
+      } else {
+        return res.status(502).json({ error: 'No image in AI response' });
+      }
+
+      // Upload to our storage (Supabase or local disk)
+      const filename = `ai-edit-${Date.now()}.png`;
+      const { url } = await storageUpload({ buffer: resultBuffer, filename, mimetype: resultMime, localDir: uploadDir });
+      console.log(`[ai/image-edit] done -> ${url}`);
+      res.json({ url });
+    } catch (err) {
+      console.error('[ai/image-edit] error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Export / Import ────────────────────────────────────────────────
 
   // GET /api/rooms/:code/export
