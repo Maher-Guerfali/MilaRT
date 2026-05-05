@@ -44,15 +44,22 @@ export default function ItemView({
   // Drag-tracking. `wasSelected` records whether the item was already
   // selected at press time, which lets endDrag distinguish "this press
   // just selected the item" from "this press is a click-to-activate".
+  type Corner = 'tl' | 'tr' | 'bl' | 'br';
   const dragRef = useRef<{
     px: number; py: number;
     ix: number; iy: number;
     iw: number; ih: number;
+    ifx: number; ify: number; ifw: number; ifh: number;
     mode: 'move' | 'resize';
+    corner: Corner;
+    hasFrame: boolean;
     moved: boolean;
     wasSelected: boolean;
   } | null>(null);
-  const [ghost, setGhost] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [ghost, setGhost] = useState<{
+    x: number; y: number; w: number; h: number;
+    frame?: { x: number; y: number; w: number; h: number };
+  } | null>(null);
   const lastDelta = useRef<{ dx: number; dy: number } | null>(null);
 
   // Per-item editing state. Only meaningful for sticky/text/link, but lives
@@ -67,7 +74,7 @@ export default function ItemView({
     );
   }
 
-  function startDrag(e: React.PointerEvent, mode: 'move' | 'resize') {
+  function startDrag(e: React.PointerEvent, mode: 'move' | 'resize', corner: Corner = 'br') {
     if (!interactive) return;
     e.stopPropagation();
     const wasSelected = selected;
@@ -80,16 +87,25 @@ export default function ItemView({
     }
 
     if (!wasSelected || mode === 'resize') onSelect(e.shiftKey);
+    const dataAny = item.data as { imgFrame?: { x: number; y: number; w: number; h: number } };
+    const fr = dataAny.imgFrame;
     dragRef.current = {
       px: e.clientX, py: e.clientY,
       ix: item.x, iy: item.y,
       iw: item.w, ih: item.h,
+      ifx: fr?.x ?? 0, ify: fr?.y ?? 0,
+      ifw: fr?.w ?? item.w, ifh: fr?.h ?? item.h,
       mode,
+      corner,
+      hasFrame: !!fr,
       moved: false,
       wasSelected,
     };
     lastDelta.current = { dx: 0, dy: 0 };
-    setGhost({ x: item.x, y: item.y, w: item.w, h: item.h });
+    setGhost({
+      x: item.x, y: item.y, w: item.w, h: item.h,
+      frame: fr ? { x: fr.x, y: fr.y, w: fr.w, h: fr.h } : undefined,
+    });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function onDrag(e: React.PointerEvent) {
@@ -108,9 +124,45 @@ export default function ItemView({
           lastDelta.current = { dx, dy };
         }
       }
-    } else {
-      setGhost({ x: d.ix, y: d.iy, w: Math.max(60, d.iw + dx), h: Math.max(40, d.ih + dy) });
+      return;
     }
+
+    // Resize. Corner-aware so TL/TR/BL grow the box outward in the
+    // requested direction. For image items in extend mode we also keep
+    // the inner image visually anchored by compensating imgFrame.x/y.
+    const corner = d.corner;
+    let nx = d.ix, ny = d.iy, nw = d.iw, nh = d.ih;
+    let nfx = d.ifx, nfy = d.ify;
+
+    if (corner === 'br' || corner === 'tr') nw = d.iw + dx;
+    if (corner === 'br' || corner === 'bl') nh = d.ih + dy;
+
+    if (corner === 'bl' || corner === 'tl') {
+      // Pull from the left. Clamp so the inner image stays inside the
+      // box and the box doesn't shrink below the image's right edge.
+      const minWidth = d.hasFrame ? Math.max(60, d.ifx + d.ifw) : 60;
+      let cdx = Math.min(dx, d.ifx);            // image-frame left ≥ 0
+      cdx = Math.min(cdx, d.iw - minWidth);     // resulting width ≥ minWidth
+      nx = d.ix + cdx;
+      nw = d.iw - cdx;
+      nfx = d.ifx - cdx;
+    }
+    if (corner === 'tr' || corner === 'tl') {
+      const minHeight = d.hasFrame ? Math.max(40, d.ify + d.ifh) : 40;
+      let cdy = Math.min(dy, d.ify);
+      cdy = Math.min(cdy, d.ih - minHeight);
+      ny = d.iy + cdy;
+      nh = d.ih - cdy;
+      nfy = d.ify - cdy;
+    }
+
+    nw = Math.max(60, nw);
+    nh = Math.max(40, nh);
+
+    setGhost({
+      x: nx, y: ny, w: nw, h: nh,
+      frame: d.hasFrame ? { x: nfx, y: nfy, w: d.ifw, h: d.ifh } : undefined,
+    });
   }
   function endDrag(e: React.PointerEvent) {
     const d = dragRef.current;
@@ -130,8 +182,31 @@ export default function ItemView({
     }
 
     if (!droppedToStorage) {
-      if (d.mode === 'move') onUpdate({ x: finalBox.x, y: finalBox.y });
-      else onUpdate({ w: finalBox.w, h: finalBox.h });
+      if (d.mode === 'move') {
+        onUpdate({ x: finalBox.x, y: finalBox.y });
+      } else {
+        const patch: Partial<BaseItem> = {
+          x: finalBox.x, y: finalBox.y, w: finalBox.w, h: finalBox.h,
+        };
+        // Persist scaled imgFrame for image items in extend mode.
+        if (d.hasFrame && finalBox.frame) {
+          patch.data = { ...item.data, imgFrame: finalBox.frame };
+        }
+        // Scale text size for sticky/link so resizing the box also
+        // resizes its text (area-proportional, sqrt of area ratio).
+        if ((item.type === 'sticky' || item.type === 'link') &&
+            d.iw > 0 && d.ih > 0) {
+          const ratio = Math.sqrt((finalBox.w * finalBox.h) / (d.iw * d.ih));
+          if (Math.abs(ratio - 1) > 0.001) {
+            const dataAny = item.data as { fontSize?: number };
+            const defaultFS = item.type === 'sticky' ? 12.5 : 16;
+            const oldFS = dataAny.fontSize ?? defaultFS;
+            const nextFS = Math.max(6, Math.min(160, oldFS * ratio));
+            patch.data = { ...item.data, fontSize: nextFS };
+          }
+        }
+        onUpdate(patch);
+      }
     }
     dragRef.current = null;
     lastDelta.current = null;
@@ -162,6 +237,19 @@ export default function ItemView({
     zIndex: 60,
   });
 
+  // Live preview of the inner image frame while extending. When the
+  // ghost has a frame it overrides the persisted data.imgFrame so users
+  // see white-space grow on the corner they are dragging.
+  const liveFrame = ghost?.frame;
+  // Linear scale ratio for live-previewing text size during a resize
+  // drag. Stored values only update on endDrag.
+  const liveTextScale = (item.w > 0 && item.h > 0)
+    ? Math.sqrt((pos.w * pos.h) / (item.w * item.h))
+    : 1;
+
+  const inImageExtend = item.type === 'image' &&
+    !!(item.data as { imgFrame?: unknown }).imgFrame;
+
   return (
     <div
       data-item
@@ -182,30 +270,33 @@ export default function ItemView({
       onPointerCancel={endDrag}
     >
       {item.type === 'sticky' && (
-        <Sticky item={item} selected={selected} editing={editing} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
+        <Sticky item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
       {item.type === 'image' && (
-        <ImageBox item={item} selected={selected} strokes={strokes} view={view} onUpdate={onUpdate} />
+        <ImageBox item={item} selected={selected} strokes={strokes} view={view} liveFrame={liveFrame} onUpdate={onUpdate} />
       )}
       {item.type === 'link' && (
-        <TextOrLink item={item} selected={selected} editing={editing} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
+        <TextOrLink item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
       {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
 
-      {/* Drag grip — fixed screen size even while the canvas is zoomed. */}
-      <button
-        title="Drag"
-        className={`absolute w-7 h-7 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-        style={fixedControl('0%', '0%')}
-        onPointerDown={(e) => startDrag(e, 'move')}
-        onPointerMove={onDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-      >
-        <GripIcon size={14} />
-      </button>
+      {/* Drag grip — fixed screen size even while the canvas is zoomed.
+          Hidden in image-extend mode where the TL corner is a resize handle. */}
+      {!inImageExtend && (
+        <button
+          title="Drag"
+          className={`absolute w-7 h-7 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 hover:text-ink cursor-grab active:cursor-grabbing transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          style={fixedControl('0%', '0%')}
+          onPointerDown={(e) => startDrag(e, 'move')}
+          onPointerMove={onDrag}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        >
+          <GripIcon size={14} />
+        </button>
+      )}
 
-      {selected && (
+      {selected && !inImageExtend && (
         <div
           className="absolute flex items-center gap-1"
           style={fixedControl('100%', '0%')}
@@ -257,41 +348,105 @@ export default function ItemView({
         </div>
       )}
 
-      <div
-        className={`absolute w-6 h-6 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 cursor-se-resize transition-opacity ${
-          selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-        }`}
+      <ResizeHandle
+        corner="br"
+        selected={selected}
         style={fixedControl('100%', '100%')}
-        onPointerDown={(e) => startDrag(e, 'resize')}
-        onPointerMove={onDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        title="Resize"
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d="M9 21 21 9" /><path d="M14 21 21 14" /><path d="M19 21 21 19" />
-        </svg>
-      </div>
+        onStart={(e) => startDrag(e, 'resize', 'br')}
+        onMove={onDrag}
+        onEnd={endDrag}
+      />
+
+      {/* Extra corner handles when an image is in AI extend mode, so the
+          user can grow white space toward any corner instead of just BR. */}
+      {inImageExtend && (
+        <>
+          <ResizeHandle
+            corner="tl"
+            selected={selected}
+            style={fixedControl('0%', '0%')}
+            onStart={(e) => startDrag(e, 'resize', 'tl')}
+            onMove={onDrag}
+            onEnd={endDrag}
+          />
+          <ResizeHandle
+            corner="tr"
+            selected={selected}
+            style={fixedControl('100%', '0%')}
+            onStart={(e) => startDrag(e, 'resize', 'tr')}
+            onMove={onDrag}
+            onEnd={endDrag}
+          />
+          <ResizeHandle
+            corner="bl"
+            selected={selected}
+            style={fixedControl('0%', '100%')}
+            onStart={(e) => startDrag(e, 'resize', 'bl')}
+            onMove={onDrag}
+            onEnd={endDrag}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function ResizeHandle({
+  corner, selected, style, onStart, onMove, onEnd,
+}: {
+  corner: 'tl' | 'tr' | 'bl' | 'br';
+  selected: boolean;
+  style: React.CSSProperties;
+  onStart: (e: React.PointerEvent) => void;
+  onMove: (e: React.PointerEvent) => void;
+  onEnd: (e: React.PointerEvent) => void;
+}) {
+  const cursor = corner === 'br' || corner === 'tl' ? 'nwse-resize' : 'nesw-resize';
+  // Diagonal arrow tick direction differs per corner so the icon points
+  // outward toward the corner being grown.
+  const path =
+    corner === 'br' ? 'M9 21 21 9 M14 21 21 14 M19 21 21 19' :
+    corner === 'tl' ? 'M3 15 15 3 M3 10 10 3 M3 5 5 3' :
+    corner === 'tr' ? 'M9 3 21 15 M14 3 21 10 M19 3 21 5' :
+                      'M3 9 15 21 M3 14 10 21 M3 19 5 21';
+  return (
+    <div
+      className={`absolute w-6 h-6 rounded-full bg-white shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/60 transition-opacity ${
+        selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+      }`}
+      style={{ ...style, cursor }}
+      onPointerDown={onStart}
+      onPointerMove={onMove}
+      onPointerUp={onEnd}
+      onPointerCancel={onEnd}
+      title="Resize"
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <path d={path} />
+      </svg>
     </div>
   );
 }
 
 function Sticky({
-  item, selected, editing, onDoneEditing, onUpdate,
+  item, selected, editing, liveTextScale, onDoneEditing, onUpdate,
 }: {
   item: BaseItem; selected: boolean; editing: boolean;
+  liveTextScale: number;
   onDoneEditing: () => void; onUpdate: (p: Partial<BaseItem>) => void;
 }) {
   const d = item.data as Partial<StickyData>;
   const boxShadow = selected
     ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)'
     : '0 2px 10px rgba(26,21,16,0.09)';
+  const baseFS = d.fontSize ?? 12.5;
+  const fontSize = baseFS * liveTextScale;
 
   if (editing) {
     return (
       <textarea
         autoFocus
-        className="w-full h-full resize-none border-0 outline-none p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap"
+        className="w-full h-full resize-none border-0 outline-none p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap"
         placeholder="Type something…"
         value={d.text ?? ''}
         onChange={(e) => onUpdate({ data: { ...d, text: e.target.value } })}
@@ -302,6 +457,7 @@ function Sticky({
           background: d.color || '#FFF3C4',
           borderRadius: 16,
           boxShadow,
+          fontSize,
         }}
       />
     );
@@ -309,11 +465,12 @@ function Sticky({
 
   return (
     <div
-      className="w-full h-full p-[13px_15px] text-[12.5px] leading-[1.7] text-ink whitespace-pre-wrap overflow-hidden cursor-text"
+      className="w-full h-full p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap overflow-hidden cursor-text"
       style={{
         background: d.color || '#FFF3C4',
         borderRadius: 16,
         boxShadow,
+        fontSize,
       }}
     >
       {d.text || <span className="text-ink/45 italic">Click to select, click again to type…</span>}
@@ -324,10 +481,11 @@ function Sticky({
 type ImgFrame = { x: number; y: number; w: number; h: number };
 
 function ImageBox({
-  item, selected, strokes, view, onUpdate,
+  item, selected, strokes, view, liveFrame, onUpdate,
 }: {
   item: BaseItem; selected: boolean;
   strokes: Stroke[]; view: { x: number; y: number; scale: number };
+  liveFrame?: ImgFrame;
   onUpdate: (p: Partial<BaseItem>) => void;
 }) {
   const d = item.data as Partial<ImageData> & {
@@ -338,7 +496,9 @@ function ImageBox({
   const currentUrl = d.url ?? null;
   const currentIdx = currentUrl ? Math.max(0, versions.lastIndexOf(currentUrl)) : 0;
   const inExtendMode = !!d.imgFrame;
-  const frame: ImgFrame = d.imgFrame ?? { x: 0, y: 0, w: item.w, h: item.h };
+  // Live preview frame wins over the persisted one while the user is
+  // dragging a corner so white space appears on the right side.
+  const frame: ImgFrame = liveFrame ?? d.imgFrame ?? { x: 0, y: 0, w: item.w, h: item.h };
 
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -362,20 +522,22 @@ function ImageBox({
     } else if (!aiOpen && d.imgFrame) {
       // Snap the bounding box back to the image so the user isn't left
       // with a stretched image filling the white space they were
-      // experimenting with.
+      // experimenting with. Shift x/y by the frame offset so the image
+      // stays put on screen even after a TL/TR/BL extend.
       const f = d.imgFrame;
       const next = { ...d } as Record<string, unknown>;
       delete next.imgFrame;
-      onUpdate({ w: f.w, h: f.h, data: next });
+      onUpdate({ x: item.x + f.x, y: item.y + f.y, w: f.w, h: f.h, data: next });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiOpen]);
 
   function exitExtendMode() {
     if (!d.imgFrame) return;
+    const f = d.imgFrame;
     const next = { ...d };
     delete next.imgFrame;
-    onUpdate({ data: next });
+    onUpdate({ x: item.x + f.x, y: item.y + f.y, w: f.w, h: f.h, data: next });
   }
 
   useEffect(() => {
@@ -758,27 +920,31 @@ function AIBrushIcon() {
 }
 
 function TextOrLink({
-  item, selected, editing, onDoneEditing, onUpdate,
+  item, selected, editing, liveTextScale, onDoneEditing, onUpdate,
 }: {
   item: BaseItem; selected: boolean; editing: boolean;
+  liveTextScale: number;
   onDoneEditing: () => void; onUpdate: (p: Partial<BaseItem>) => void;
 }) {
   const d = item.data as Partial<LinkData>;
   const txt = (d.title || d.url || '').toString();
   const isUrl = /^https?:\/\/\S+$/i.test(txt.trim());
   const ytId = isUrl ? youTubeId(txt.trim()) : null;
+  const baseFS = d.fontSize ?? 16;
+  const fontSize = baseFS * liveTextScale;
 
   if (editing) {
     return (
       <textarea
         autoFocus
-        className="w-full h-full resize-none p-1.5 text-[14px] leading-snug bg-paper rounded-lg outline outline-2 outline-amber"
+        className="w-full h-full resize-none p-1.5 leading-snug bg-paper rounded-lg outline outline-2 outline-amber"
         value={txt}
         placeholder="Type text or paste a link…"
-        onChange={(e) => onUpdate({ data: { url: '', title: e.target.value } })}
+        onChange={(e) => onUpdate({ data: { ...d, url: '', title: e.target.value } })}
         onBlur={onDoneEditing}
         onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === 'Escape') (e.currentTarget as HTMLTextAreaElement).blur(); }}
+        style={{ fontSize }}
       />
     );
   }
@@ -823,7 +989,7 @@ function TextOrLink({
     <div
       className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
       style={{
-        fontSize: 16, fontWeight: 700, lineHeight: 1.45, letterSpacing: '-0.2px',
+        fontSize, fontWeight: 700, lineHeight: 1.45, letterSpacing: '-0.2px',
         boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
       }}
     >
