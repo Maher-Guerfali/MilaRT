@@ -11,6 +11,7 @@ interface Props {
   interactive: boolean;
   strokes: Stroke[];
   view: { x: number; y: number; scale: number };
+  isMergeTarget?: boolean;
   onSelect: (additive: boolean) => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
@@ -18,6 +19,8 @@ interface Props {
   onEnterBoard: () => void;
   onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
   onSendToStorage?: (id: string) => void;
+  onSetMergeTarget?: (id: string | null) => void;
+  onMerge?: (srcId: string, targetId: string) => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -38,9 +41,11 @@ function youTubeId(raw: string): string | null {
 
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
+  isMergeTarget,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
-  onSendToStorage,
+  onSendToStorage, onSetMergeTarget, onMerge,
 }: Props) {
+  const mergeTargetIdRef = useRef<string | null>(null);
   // Drag-tracking. `wasSelected` records whether the item was already
   // selected at press time, which lets endDrag distinguish "this press
   // just selected the item" from "this press is a click-to-activate".
@@ -72,6 +77,21 @@ export default function ItemView({
     return !(target as HTMLElement | null)?.closest(
       'button, input, textarea, a, iframe, [data-no-item-drag]'
     );
+  }
+
+  // Walk the stack of elements at the cursor and return the topmost
+  // sticky/link item that isn't the one being dragged.
+  function findMergeTargetAt(clientX: number, clientY: number, excludeId: string): string | null {
+    const els = document.elementsFromPoint(clientX, clientY);
+    for (const el of els) {
+      const itemEl = (el as HTMLElement).closest('[data-item-id]') as HTMLElement | null;
+      if (!itemEl) continue;
+      const id = itemEl.getAttribute('data-item-id');
+      if (!id || id === excludeId) continue;
+      const t = itemEl.getAttribute('data-item-type');
+      if (t === 'sticky' || t === 'link') return id;
+    }
+    return null;
   }
 
   function startDrag(e: React.PointerEvent, mode: 'move' | 'resize', corner: Corner = 'br') {
@@ -122,6 +142,17 @@ export default function ItemView({
         if (idx !== 0 || idy !== 0) {
           onMoveGroup(selectionIds.filter((id) => id !== item.id), idx, idy);
           lastDelta.current = { dx, dy };
+        }
+      }
+      // Hover-merge: while dragging a sticky or text on top of another
+      // sticky/text, mark it as the merge target so it can pulse and
+      // glow. Single-item drags only — group moves never merge.
+      if (onSetMergeTarget && d.moved && selectionIds.length <= 1 &&
+          (item.type === 'sticky' || item.type === 'link')) {
+        const target = findMergeTargetAt(e.clientX, e.clientY, item.id);
+        if (target !== mergeTargetIdRef.current) {
+          mergeTargetIdRef.current = target;
+          onSetMergeTarget(target);
         }
       }
       return;
@@ -181,7 +212,19 @@ export default function ItemView({
       }
     }
 
-    if (!droppedToStorage) {
+    // Drop-to-merge: a sticky/text dropped on top of another sticky/text
+    // is consumed and its text appended to the target.
+    let mergedAway = false;
+    const pendingMergeTarget = mergeTargetIdRef.current;
+    if (!droppedToStorage && d.mode === 'move' && d.moved && pendingMergeTarget &&
+        onMerge && (item.type === 'sticky' || item.type === 'link')) {
+      onMerge(item.id, pendingMergeTarget);
+      mergedAway = true;
+    }
+    mergeTargetIdRef.current = null;
+    onSetMergeTarget?.(null);
+
+    if (!droppedToStorage && !mergedAway) {
       if (d.mode === 'move') {
         onUpdate({ x: finalBox.x, y: finalBox.y });
       } else {
@@ -212,7 +255,7 @@ export default function ItemView({
     lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    if (droppedToStorage) return;
+    if (droppedToStorage || mergedAway) return;
 
     // Click-to-activate. Only fires when:
     //   - this was a press, not a drag (no movement),
@@ -254,12 +297,17 @@ export default function ItemView({
     <div
       data-item
       data-item-id={item.id}
-      className={`group absolute${selected ? ' animate-itemWiggle' : ''}`}
+      data-item-type={item.type}
+      className={`group absolute${
+        isMergeTarget ? ' animate-mergeGlow' : selected ? ' animate-itemWiggle' : ''
+      }`}
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
-        zIndex: selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
-        filter: selected ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))' : undefined,
+        zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
+        filter: !isMergeTarget && selected
+          ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))'
+          : undefined,
       }}
       onPointerDown={(e) => {
         if (!canDragFrom(e.target)) return;

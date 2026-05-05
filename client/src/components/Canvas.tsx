@@ -29,15 +29,21 @@ interface Props {
   onEnterBoard: (itemId: string) => void;
   onSendToStorage?: (id: string) => void;
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
+  onMerge?: (srcId: string, targetId: string) => void;
 }
 
 export interface CanvasHandle {
   getCenter: () => { x: number; y: number };
 }
 
-const MIN_SCALE = 0.25;
-const MAX_SCALE = 2.5;
+const MIN_SCALE = 0.1;
+const MAX_SCALE = 4;
+const ZOOM_STEP = 1.2;
 const SIZE_TO_PX: Record<SizeKey, number> = { sm: 2, md: 4, lg: 8 };
+
+function clampScale(s: number) {
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
+}
 
 function ptInPoly(px: number, py: number, poly: [number, number][]) {
   let inside = false;
@@ -52,13 +58,14 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
-    onSendToStorage, onRestoreFromStorageAt,
+    onSendToStorage, onRestoreFromStorageAt, onMerge,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
@@ -104,14 +111,19 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     const rect = wrapRef.current!.getBoundingClientRect();
     const cx = clientX - rect.left;
     const cy = clientY - rect.top;
-    const worldX = (cx - view.x) / view.scale;
-    const worldY = (cy - view.y) / view.scale;
-    setView({ scale: nextScale, x: cx - worldX * nextScale, y: cy - worldY * nextScale });
+    // Re-read view inside the setter so concurrent updates (wheel + buttons)
+    // don't fight each other.
+    setView((v) => {
+      const ns = clampScale(nextScale);
+      const worldX = (cx - v.x) / v.scale;
+      const worldY = (cy - v.y) / v.scale;
+      return { scale: ns, x: cx - worldX * ns, y: cy - worldY * ns };
+    });
   }
-  function bumpZoom(delta: number) {
-    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale * (1 + delta)));
+  function bumpZoom(direction: 1 | -1) {
+    const factor = direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
     const rect = wrapRef.current!.getBoundingClientRect();
-    zoomAround(rect.left + rect.width / 2, rect.top + rect.height / 2, next);
+    zoomAround(rect.left + rect.width / 2, rect.top + rect.height / 2, view.scale * factor);
   }
   function resetView() { setView({ x: 0, y: 0, scale: 1 }); }
 
@@ -161,8 +173,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       const pts = Array.from(pinchRef.current.values());
       const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
       const { dist: startDist, scale: startScale, cx, cy } = pinchStartRef.current;
-      const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, startScale * (dist / startDist)));
-      zoomAround(cx, cy, nextScale);
+      zoomAround(cx, cy, startScale * (dist / startDist));
       return;
     }
 
@@ -203,10 +214,11 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
 
   function onWheel(e: React.WheelEvent) {
     if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = -e.deltaY * 0.0015;
-      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale * (1 + delta)));
-      zoomAround(e.clientX, e.clientY, next);
+      // Multiplicative zoom — using exp keeps zoom in/out symmetric and
+      // safe for large trackpad-pinch deltas (which used to invert the
+      // scale when the additive (1 + delta) formula went negative).
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      zoomAround(e.clientX, e.clientY, view.scale * factor);
     } else {
       setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
     }
@@ -384,6 +396,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             interactive={interactive}
             strokes={strokes}
             view={view}
+            isMergeTarget={mergeTargetId === it.id}
             onSelect={(additive) => selectItem(it.id, additive)}
             onUpdate={(patch) => onUpdate(it.id, patch)}
             onMoveGroup={moveGroup}
@@ -391,6 +404,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onEnterBoard={() => onEnterBoard(it.id)}
             onMoveLayer={onMoveLayer}
             onSendToStorage={onSendToStorage}
+            onSetMergeTarget={setMergeTargetId}
+            onMerge={onMerge}
           />
         ))}
       </div>
@@ -449,7 +464,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         onPointerDown={(e) => e.stopPropagation()}
       >
         <button
-          onClick={() => bumpZoom(-0.15)}
+          onClick={() => bumpZoom(-1)}
           className="w-7 h-7 rounded-lg flex items-center justify-center text-ink/50 hover:bg-ink/10 transition-colors"
           title="Zoom out"
         ><MinusIcon size={14} /></button>
@@ -462,7 +477,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
           {Math.round(view.scale * 100)}%
         </button>
         <button
-          onClick={() => bumpZoom(0.15)}
+          onClick={() => bumpZoom(1)}
           className="w-7 h-7 rounded-lg flex items-center justify-center text-ink/50 hover:bg-ink/10 transition-colors"
           title="Zoom in"
         ><PlusIcon size={14} /></button>

@@ -28,6 +28,16 @@ export default {
           '60%':      { transform: 'translateY(-2px) rotate(-0.8deg)' },
           '80%':      { transform: 'translateY(-1px) rotate(0.5deg)' },
         },
+        mergeGlow: {
+          '0%, 100%': {
+            transform: 'scale(1.07)',
+            filter: 'drop-shadow(0 0 14px rgba(217,116,53,0.55)) drop-shadow(0 0 24px rgba(217,116,53,0.30))',
+          },
+          '50%': {
+            transform: 'scale(1.13)',
+            filter: 'drop-shadow(0 0 22px rgba(217,116,53,0.78)) drop-shadow(0 0 40px rgba(217,116,53,0.50))',
+          },
+        },
       },
       animation: {
         fadeUp:     'fadeUp 0.3s ease both',
@@ -38,6 +48,7 @@ export default {
         canvasIn:   'canvasIn 0.48s ease both',
         marchAnt:   'marchAnt 0.5s linear infinite',
         itemWiggle: 'itemWiggle 1.4s ease-in-out infinite',
+        mergeGlow:  'mergeGlow 0.85s ease-in-out infinite',
       },
     },
   },

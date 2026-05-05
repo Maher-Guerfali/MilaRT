@@ -271,6 +271,41 @@ export default function BoardPage() {
   function deleteFromStorage(id: string) {
     setStoredItems((s) => s.filter((p) => p.id !== id));
   }
+  // Drag-merge: stitch the source's text under the target's existing text
+  // and remove the source. Works between sticky ↔ link/text in any pair.
+  function mergeItems(srcId: string, targetId: string) {
+    if (srcId === targetId) return;
+    setItems((xs) => {
+      const src = xs.find((x) => x.id === srcId);
+      const target = xs.find((x) => x.id === targetId);
+      if (!src || !target) return xs;
+      const getText = (it: BaseItem): string => {
+        const dt = it.data as { text?: string; title?: string; url?: string };
+        if (it.type === 'sticky') return dt.text ?? '';
+        if (it.type === 'link') return (dt.title || dt.url || '').toString();
+        return '';
+      };
+      const srcText = getText(src);
+      const targetText = getText(target);
+      const merged = targetText && srcText
+        ? `${targetText}\n${srcText}`
+        : (srcText || targetText);
+      return xs
+        .filter((x) => x.id !== srcId)
+        .map((x) => {
+          if (x.id !== targetId) return x;
+          if (x.type === 'sticky') {
+            return { ...x, data: { ...x.data, text: merged } };
+          }
+          if (x.type === 'link') {
+            // Once merged the item becomes plain text — clear the URL so the
+            // renderer no longer treats it as a link/embed.
+            return { ...x, data: { ...x.data, title: merged, url: '' } };
+          }
+          return x;
+        });
+    });
+  }
   // Items are rendered in array order. Bringing forward = move toward end.
   function moveLayer(id: string, dir: 'forward' | 'backward') {
     setItems((xs) => {
@@ -410,6 +445,7 @@ export default function BoardPage() {
           onEnterBoard={enterBoard}
           onSendToStorage={sendToStorage}
           onRestoreFromStorageAt={restoreFromStorageAt}
+          onMerge={mergeItems}
         />
 
         <CanvasDock
