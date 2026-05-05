@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid';
 import type { BaseItem } from '../types';
 import { api } from '../api';
 import {
-  StickyIcon, LinkIcon, BoardIcon, ImageIcon, TextIcon,
+  StickyIcon, LinkIcon, BoardIcon, ImageIcon, TextIcon, DocumentIcon,
   SettingsIcon,
 } from './icons';
 import Tooltip from './Tooltip';
@@ -156,6 +156,19 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
       action: () => addItem(template({
         type: 'link', w: 218, h: 44,
         data: { url: '', title: '' },
+      })),
+    },
+    {
+      label: 'Doc',
+      hint: 'Drag or tap to add a document',
+      Icon: DocumentIcon,
+      dragData: JSON.stringify(template({
+        type: 'document', w: 168, h: 200,
+        data: { title: 'Untitled', content: '' },
+      })),
+      action: () => addItem(template({
+        type: 'document', w: 168, h: 200,
+        data: { title: 'Untitled', content: '' },
       })),
     },
   ];

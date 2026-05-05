@@ -11,6 +11,7 @@ import SettingsModal from '../components/SettingsModal';
 import TutorialModal from '../components/TutorialModal';
 import AIPreviewModal from '../components/AIPreviewModal';
 import StoragePanel from '../components/StoragePanel';
+import DocumentEditor from '../components/DocumentEditor';
 import { useHistory } from '../hooks/useHistory';
 
 interface Snap {
@@ -33,6 +34,7 @@ export default function BoardPage() {
 
   const [isMove, setIsMove] = useState(true);
   const [drawOpen, setDrawOpen] = useState(false);
+  const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
   const [drawTool, setDrawTool] = useState<DrawTool>('pencil');
   const [drawColor, setDrawColor] = useState('#1a1510');
   const [penSize, setPenSize] = useState<SizeKey>('md');
@@ -446,6 +448,7 @@ export default function BoardPage() {
           onSendToStorage={sendToStorage}
           onRestoreFromStorageAt={restoreFromStorageAt}
           onMerge={mergeItems}
+          onOpenDocument={setOpenDocumentId}
         />
 
         <CanvasDock
@@ -482,6 +485,18 @@ export default function BoardPage() {
         onRestoreToCanvasCenter={restoreFromStorageCenter}
         onDelete={deleteFromStorage}
       />
+
+      {openDocumentId && (() => {
+        const doc = items.find((it) => it.id === openDocumentId);
+        if (!doc) return null;
+        return (
+          <DocumentEditor
+            item={doc}
+            onUpdate={(patch) => updateItem(doc.id, patch)}
+            onClose={() => setOpenDocumentId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

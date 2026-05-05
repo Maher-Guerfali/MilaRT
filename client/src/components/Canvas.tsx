@@ -30,6 +30,7 @@ interface Props {
   onSendToStorage?: (id: string) => void;
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
+  onOpenDocument?: (id: string) => void;
 }
 
 export interface CanvasHandle {
@@ -58,7 +59,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
-    onSendToStorage, onRestoreFromStorageAt, onMerge,
+    onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -71,9 +72,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
   const [lassoActive, setLassoActive] = useState(false);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
-  // Pinch-to-zoom: track the two active pointer positions.
-  const pinchRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchStartRef = useRef<{ dist: number; scale: number; cx: number; cy: number } | null>(null);
 
   const inDrawMode  = drawOpen && drawTool === 'pencil';
   const inEraseMode = drawOpen && drawTool === 'eraser';
@@ -107,6 +105,58 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     return () => ro.disconnect();
   }, []);
 
+  // Two-finger pinch zoom via native TouchEvents. Pointer events get
+  // .stopPropagation()'d by items, so a pinch starting on a sticky/image
+  // never reached the bg pinch logic. Touch events propagate
+  // independently, and we attach as non-passive so we can preventDefault
+  // the page-zoom behaviour Mobile Safari applies otherwise.
+  const viewRef = useRef(view);
+  useEffect(() => { viewRef.current = view; }, [view]);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    let active = false;
+    let startDist = 0;
+    let startScale = 1;
+    let cx = 0;
+    let cy = 0;
+    function start(e: TouchEvent) {
+      if (e.touches.length !== 2) return;
+      const t1 = e.touches[0], t2 = e.touches[1];
+      startDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      cx = (t1.clientX + t2.clientX) / 2;
+      cy = (t1.clientY + t2.clientY) / 2;
+      startScale = viewRef.current.scale;
+      active = true;
+      e.preventDefault();
+    }
+    function move(e: TouchEvent) {
+      if (!active || e.touches.length !== 2 || startDist === 0) return;
+      const t1 = e.touches[0], t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      // Recentre on the midpoint each frame so the canvas anchors to
+      // the gesture rather than to its first sample, matching Milanote.
+      cx = (t1.clientX + t2.clientX) / 2;
+      cy = (t1.clientY + t2.clientY) / 2;
+      zoomAround(cx, cy, startScale * (dist / startDist));
+      e.preventDefault();
+    }
+    function end(e: TouchEvent) {
+      if (e.touches.length < 2) active = false;
+    }
+    el.addEventListener('touchstart', start, { passive: false });
+    el.addEventListener('touchmove', move, { passive: false });
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
+    return () => {
+      el.removeEventListener('touchstart', start);
+      el.removeEventListener('touchmove', move);
+      el.removeEventListener('touchend', end);
+      el.removeEventListener('touchcancel', end);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function zoomAround(clientX: number, clientY: number, nextScale: number) {
     const rect = wrapRef.current!.getBoundingClientRect();
     const cx = clientX - rect.left;
@@ -128,23 +178,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   function resetView() { setView({ x: 0, y: 0, scale: 1 }); }
 
   function onBgPointerDown(e: React.PointerEvent) {
-    // Track all touch/pointer contacts for pinch detection.
-    pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
     if (drawOpen && drawTool !== 'select') return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
-
-    // Two-finger pinch detected — stop panning, start pinch.
-    if (pinchRef.current.size === 2) {
-      setPanning(false);
-      panStart.current = null;
-      const pts = Array.from(pinchRef.current.values());
-      const cx = (pts[0].x + pts[1].x) / 2;
-      const cy = (pts[0].y + pts[1].y) / 2;
-      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-      pinchStartRef.current = { dist, scale: view.scale, cx, cy };
-      return;
-    }
 
     if (inSelectMode) {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -163,20 +198,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   }
 
   function onBgPointerMove(e: React.PointerEvent) {
-    // Update tracked position.
-    if (pinchRef.current.has(e.pointerId)) {
-      pinchRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    }
-
-    // Active pinch — two fingers.
-    if (pinchRef.current.size === 2 && pinchStartRef.current) {
-      const pts = Array.from(pinchRef.current.values());
-      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-      const { dist: startDist, scale: startScale, cx, cy } = pinchStartRef.current;
-      zoomAround(cx, cy, startScale * (dist / startDist));
-      return;
-    }
-
     if (lassoActive) {
       const p = toWorld(e.clientX, e.clientY);
       setLassoPath((prev) => [...prev, [p.x, p.y]]);
@@ -188,9 +209,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   }
 
   function onBgPointerUp(e: React.PointerEvent) {
-    pinchRef.current.delete(e.pointerId);
-    if (pinchRef.current.size < 2) pinchStartRef.current = null;
-
     if (lassoActive) {
       setLassoActive(false);
       const poly = lassoPath;
@@ -212,17 +230,27 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
 
-  function onWheel(e: React.WheelEvent) {
-    if (e.ctrlKey || e.metaKey) {
-      // Multiplicative zoom — using exp keeps zoom in/out symmetric and
-      // safe for large trackpad-pinch deltas (which used to invert the
-      // scale when the additive (1 + delta) formula went negative).
-      const factor = Math.exp(-e.deltaY * 0.0015);
-      zoomAround(e.clientX, e.clientY, view.scale * factor);
-    } else {
-      setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+  // Native wheel listener so we can preventDefault() — the browser would
+  // otherwise zoom the page itself on Ctrl+wheel / trackpad-pinch.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    function onWheel(e: WheelEvent) {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        // Multiplicative zoom — exp keeps zoom in/out symmetric and
+        // safe for large trackpad deltas (the old (1 + delta) form
+        // could go negative and flip the canvas).
+        const factor = Math.exp(-e.deltaY * 0.0015);
+        zoomAround(e.clientX, e.clientY, viewRef.current.scale * factor);
+      } else {
+        setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+      }
     }
-  }
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function placeImageNow(url: string, cx: number, cy: number, defaultW = 218, defaultH = 148) {
     onAdd({
@@ -377,7 +405,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       onPointerUp={onBgPointerUp}
       onPointerCancel={onBgPointerUp}
       onContextMenu={(e) => e.preventDefault()}
-      onWheel={onWheel}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOver(true); }}
       onDragLeave={(e) => { if (!wrapRef.current?.contains(e.relatedTarget as Node)) setDragOver(false); }}
       onDrop={onDrop}
@@ -406,6 +433,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onSendToStorage={onSendToStorage}
             onSetMergeTarget={setMergeTargetId}
             onMerge={onMerge}
+            onOpenDocument={onOpenDocument}
           />
         ))}
       </div>

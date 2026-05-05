@@ -51,25 +51,29 @@ export default function StoragePanel({ items, onRestoreToCanvasCenter, onDelete 
       }}
       onDrop={() => setHoverDrop(false)}
     >
-      {/* Vertical tab — collapsed handle */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title={open ? 'Close storage' : 'Open storage'}
-        className="h-full flex items-center justify-center hover:bg-ink/5 transition-colors shrink-0"
+      {/* Vertical tab — compact handle. Sits at the top of the strip
+          so the rest of the column is plain drop-target / spacer. */}
+      <div
+        className="h-full flex flex-col items-center shrink-0"
         style={{
           width: 36,
           minWidth: 36,
           borderRight: open ? '1px solid rgba(26,21,16,0.10)' : 'none',
-          cursor: 'pointer',
         }}
       >
-        <span
-          className="text-[10px] font-bold uppercase tracking-[0.22em] text-ink/55 select-none"
-          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', whiteSpace: 'nowrap' }}
+        <button
+          onClick={() => setOpen((o) => !o)}
+          title={open ? 'Close storage' : 'Open storage'}
+          className="mt-3 px-1.5 py-2 rounded-md hover:bg-ink/10 transition-colors"
         >
-          Storage{count > 0 ? ` · ${count}` : ''}
-        </span>
-      </button>
+          <span
+            className="text-[10px] font-bold uppercase tracking-[0.22em] text-ink/55 select-none"
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', whiteSpace: 'nowrap' }}
+          >
+            Storage{count > 0 ? ` · ${count}` : ''}
+          </span>
+        </button>
+      </div>
 
       {/* Body */}
       <div

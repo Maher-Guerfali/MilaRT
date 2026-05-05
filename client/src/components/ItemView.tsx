@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, Stroke } from '../types';
+import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
 import { api } from '../api';
-import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon } from './icons';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -21,6 +21,7 @@ interface Props {
   onSendToStorage?: (id: string) => void;
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
+  onOpenDocument?: (id: string) => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -43,7 +44,7 @@ export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
   isMergeTarget,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
-  onSendToStorage, onSetMergeTarget, onMerge,
+  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
 }: Props) {
   const mergeTargetIdRef = useRef<string | null>(null);
   // Drag-tracking. `wasSelected` records whether the item was already
@@ -266,6 +267,8 @@ export default function ItemView({
         onEnterBoard();
       } else if (item.type === 'sticky' || item.type === 'link') {
         setEditing(true);
+      } else if (item.type === 'document' && onOpenDocument) {
+        onOpenDocument(item.id);
       }
     }
   }
@@ -327,6 +330,9 @@ export default function ItemView({
         <TextOrLink item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
       {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
+      {item.type === 'document' && (
+        <DocumentBox item={item} selected={selected} onOpen={() => onOpenDocument?.(item.id)} />
+      )}
 
       {/* Drag grip — fixed screen size even while the canvas is zoomed.
           Hidden in image-extend mode where the TL corner is a resize handle. */}
@@ -629,6 +635,19 @@ function ImageBox({
     onUpdate({ data: { ...d, url, versions } });
   }
 
+  function deleteVersion(idx: number) {
+    if (versions.length <= 1) return;
+    const removedUrl = versions[idx];
+    const newVersions = versions.filter((_, i) => i !== idx);
+    // If the user deletes the version they're currently viewing, fall
+    // back to the neighbour at the same slot (or the new last one).
+    let nextUrl = currentUrl;
+    if (removedUrl === currentUrl) {
+      nextUrl = newVersions[Math.min(idx, newVersions.length - 1)] ?? newVersions[0];
+    }
+    onUpdate({ data: { ...d, url: nextUrl, versions: newVersions } });
+  }
+
   if (!currentUrl) {
     return (
       <div
@@ -762,6 +781,7 @@ function ImageBox({
           versions={versions}
           currentIdx={currentIdx}
           onSwitch={switchVersion}
+          onDelete={deleteVersion}
         />
       )}
     </div>
@@ -770,11 +790,12 @@ function ImageBox({
 
 // ── Version history panel ──────────────────────────────────────────────────
 function VersionPanel({
-  versions, currentIdx, onSwitch,
+  versions, currentIdx, onSwitch, onDelete,
 }: {
   versions: string[];
   currentIdx: number;
   onSwitch: (idx: number) => void;
+  onDelete: (idx: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -839,11 +860,10 @@ function VersionPanel({
             style={{ scrollbarWidth: 'none' }}
           >
             {versions.map((url, i) => (
-              <button
+              <div
                 key={i}
                 data-active={i === currentIdx ? 'true' : 'false'}
-                onClick={(e) => { e.stopPropagation(); onSwitch(i); }}
-                className="w-full shrink-0 rounded-lg overflow-hidden transition-all relative"
+                className="group/v w-full shrink-0 rounded-lg overflow-hidden transition-all relative"
                 style={{
                   aspectRatio: '1',
                   outline: i === currentIdx ? '2px solid #D97435' : '1.5px solid rgba(26,21,16,0.08)',
@@ -851,16 +871,21 @@ function VersionPanel({
                   opacity: i === currentIdx ? 1 : 0.65,
                   transform: i === currentIdx ? 'scale(1.05)' : 'scale(1)',
                 }}
-                title={i === 0 ? 'Original' : `AI edit ${i}`}
               >
-                <img
-                  src={url}
-                  alt={i === 0 ? 'Original' : `v${i}`}
-                  draggable={false}
-                  className="w-full h-full object-cover"
-                />
+                <button
+                  onClick={(e) => { e.stopPropagation(); onSwitch(i); }}
+                  className="w-full h-full block"
+                  title={i === 0 ? 'Original' : `AI edit ${i}`}
+                >
+                  <img
+                    src={url}
+                    alt={i === 0 ? 'Original' : `v${i}`}
+                    draggable={false}
+                    className="w-full h-full object-cover"
+                  />
+                </button>
                 <span
-                  className="absolute bottom-0.5 right-0.5 text-[7px] font-bold rounded px-0.5 leading-tight"
+                  className="absolute bottom-0.5 right-0.5 text-[7px] font-bold rounded px-0.5 leading-tight pointer-events-none"
                   style={{
                     background: i === currentIdx ? '#D97435' : 'rgba(26,21,16,0.45)',
                     color: 'white',
@@ -868,7 +893,15 @@ function VersionPanel({
                 >
                   {i === 0 ? 'orig' : `v${i}`}
                 </span>
-              </button>
+                {versions.length > 1 && (
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); onDelete(i); }}
+                    title="Delete version"
+                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-ink/85 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover/v:opacity-100 transition-opacity"
+                  >×</button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -1140,6 +1173,54 @@ function BoardRefBox({
         onChange={(e) => onUpdate({ data: { ...d, name: e.target.value } })}
         onPointerDown={(e) => e.stopPropagation()}
       />
+    </div>
+  );
+}
+
+function DocumentBox({
+  item, selected, onOpen,
+}: { item: BaseItem; selected: boolean; onOpen: () => void }) {
+  const d = item.data as Partial<DocumentData>;
+  const title = d.title || 'Untitled';
+  return (
+    <div
+      className="w-full h-full rounded-2xl bg-white flex flex-col overflow-hidden"
+      style={{
+        boxShadow: selected
+          ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)'
+          : '0 2px 10px rgba(26,21,16,0.09)',
+        border: '1px solid rgba(26,21,16,0.06)',
+      }}
+    >
+      <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1.5 text-ink/55">
+        <DocumentIcon size={12} />
+        <span className="text-[9px] font-bold uppercase tracking-[0.07em]">Doc</span>
+      </div>
+      <div
+        className="px-2.5 text-[12px] font-bold text-ink truncate"
+        title={title}
+      >{title}</div>
+      <div
+        className="flex-1 mt-1.5 mx-2 mb-2 rounded-md bg-ink/[0.03] px-2 py-1.5 text-[10px] leading-snug text-ink/65 overflow-hidden pointer-events-none"
+        style={{ display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical' }}
+        // Sanitised content is produced inside DocumentEditor (mammoth /
+        // controlled execCommand) so rendering it here is safe.
+        dangerouslySetInnerHTML={{
+          __html: d.content && d.content.trim()
+            ? d.content
+            : '<i style="color:rgba(26,21,16,0.35)">Empty — click to open</i>',
+        }}
+      />
+      <button
+        data-no-item-drag
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        className="mb-2 mx-2 h-7 rounded-md text-[10.5px] font-bold transition-colors"
+        style={{
+          background: '#D97435',
+          color: '#fff',
+        }}
+      >Open</button>
     </div>
   );
 }
