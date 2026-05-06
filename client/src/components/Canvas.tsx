@@ -268,6 +268,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
 
   async function onDrop(e: React.DragEvent) {
     e.preventDefault();
+    e.stopPropagation();
     setDragOver(false);
 
     // Storage → canvas: restore an item dragged out of the Storage drawer.
@@ -297,10 +298,28 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       return;
     }
 
-    const allFiles = Array.from(e.dataTransfer.files);
+    // Some browsers populate dataTransfer.files; others (notably Safari for
+    // PDFs from certain sources) only populate dataTransfer.items. Read both.
+    let allFiles: File[] = Array.from(e.dataTransfer.files || []);
+    if (!allFiles.length && e.dataTransfer.items) {
+      const fromItems: File[] = [];
+      for (const it of Array.from(e.dataTransfer.items)) {
+        if (it.kind === 'file') {
+          const f = it.getAsFile();
+          if (f) fromItems.push(f);
+        }
+      }
+      allFiles = fromItems;
+    }
+    if (!allFiles.length) return;
+
+    const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
     const imageFiles = allFiles.filter((f) => f.type.startsWith('image/'));
-    const pdfFiles = allFiles.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-    if (!imageFiles.length && !pdfFiles.length) return;
+    const pdfFiles = allFiles.filter(isPdf);
+    if (!imageFiles.length && !pdfFiles.length) {
+      alert(`Unsupported file type: ${allFiles.map((f) => f.name || f.type || '?').join(', ')}`);
+      return;
+    }
     const start = toWorld(e.clientX, e.clientY);
     let off = 0;
     for (const file of imageFiles) {
@@ -332,6 +351,24 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       }
     }
   }
+
+  // Without this, dropping a file outside the canvas makes the browser
+  // navigate to it — losing the user's board. Capturing `dragover` and
+  // `drop` at the window level keeps the page mounted.
+  useEffect(() => {
+    function block(e: DragEvent) {
+      // Only block file drags; leave HTML5 drag-and-drop between elements alone.
+      if (e.dataTransfer?.types?.includes('Files')) {
+        e.preventDefault();
+      }
+    }
+    window.addEventListener('dragover', block);
+    window.addEventListener('drop', block);
+    return () => {
+      window.removeEventListener('dragover', block);
+      window.removeEventListener('drop', block);
+    };
+  }, []);
 
   useEffect(() => {
     async function onPaste(e: ClipboardEvent) {

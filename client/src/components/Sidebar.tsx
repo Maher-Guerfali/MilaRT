@@ -92,6 +92,7 @@ function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
 
 export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, onOpenTutorial, isDrawMode, onActivateMove }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const docPdfRef = useRef<HTMLInputElement>(null);
 
   function addItem(tmpl: ItemTemplate) {
     if (isDrawMode && onActivateMove) onActivateMove();
@@ -159,17 +160,17 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
       })),
     },
     {
-      label: 'Doc',
-      hint: 'Drag or tap to add a document',
+      label: 'Doc/PDF',
+      hint: 'Tap to import a .docx / .txt / .md / .pdf, or drag for an empty doc',
       Icon: DocumentIcon,
+      // Drag still creates an empty document tile, same as before.
       dragData: JSON.stringify(template({
         type: 'document', w: 168, h: 200,
         data: { title: 'Untitled', content: '' },
       })),
-      action: () => addItem(template({
-        type: 'document', w: 168, h: 200,
-        data: { title: 'Untitled', content: '' },
-      })),
+      // Tap opens a file picker that accepts both document formats and PDFs.
+      // The chosen file's extension decides which item type ends up on the canvas.
+      action: () => docPdfRef.current?.click(),
     },
   ];
 
@@ -182,6 +183,56 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
       onAdd(template({ type: 'image', w: 218, h: 148, data: { url } }));
     } catch (err) {
       alert('Image upload failed: ' + (err as Error).message);
+    }
+  }
+
+  async function onDocPdfFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const isPdf = ext === 'pdf' || file.type === 'application/pdf';
+
+    if (isPdf) {
+      try {
+        const { url, name, size } = await api.uploadPdf(file);
+        addItem(template({
+          type: 'pdf', w: 168, h: 200,
+          data: { url, title: name, size },
+        }));
+      } catch (err) {
+        alert('PDF upload failed: ' + (err as Error).message);
+      }
+      return;
+    }
+
+    // Document path — convert .docx via mammoth, otherwise treat as plain text.
+    const baseTitle = file.name.replace(/\.[^.]+$/, '') || 'Untitled';
+    try {
+      let html = '';
+      if (ext === 'docx') {
+        const mammoth = (await import('mammoth/mammoth.browser')) as {
+          convertToHtml: (input: { arrayBuffer: ArrayBuffer }) => Promise<{ value: string }>;
+        };
+        const buf = await file.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+        html = result.value;
+      } else {
+        const text = await file.text();
+        html = text
+          .split(/\r?\n/)
+          .map((line) => {
+            const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return `<p>${escaped || '<br/>'}</p>`;
+          })
+          .join('');
+      }
+      addItem(template({
+        type: 'document', w: 168, h: 200,
+        data: { title: baseTitle, content: html },
+      }));
+    } catch (err) {
+      alert('Failed to import document: ' + (err as Error).message);
     }
   }
 
@@ -213,6 +264,13 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
           accept="image/*"
           className="hidden"
           onChange={onFile}
+        />
+        <input
+          ref={docPdfRef}
+          type="file"
+          accept=".docx,.txt,.md,.pdf,application/pdf,text/plain"
+          className="hidden"
+          onChange={onDocPdfFile}
         />
       </div>
 
