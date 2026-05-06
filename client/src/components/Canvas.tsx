@@ -31,6 +31,7 @@ interface Props {
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  onOpenPdf?: (id: string) => void;
 }
 
 export interface CanvasHandle {
@@ -59,7 +60,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
-    onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument,
+    onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument, onOpenPdf,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -296,17 +297,38 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       return;
     }
 
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    const allFiles = Array.from(e.dataTransfer.files);
+    const imageFiles = allFiles.filter((f) => f.type.startsWith('image/'));
+    const pdfFiles = allFiles.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (!imageFiles.length && !pdfFiles.length) return;
     const start = toWorld(e.clientX, e.clientY);
     let off = 0;
-    for (const file of files) {
+    for (const file of imageFiles) {
       try {
         const { url } = await api.uploadImage(file);
         placeImageNow(url, start.x + off, start.y + off);
         off += 30;
       } catch (err) {
         alert('Image upload failed: ' + (err as Error).message);
+      }
+    }
+    for (const file of pdfFiles) {
+      try {
+        const { url, name, size } = await api.uploadPdf(file);
+        const W = 168, H = 200;
+        onAdd({
+          id: nanoid(10),
+          type: 'pdf',
+          x: start.x + off - W / 2,
+          y: start.y + off - H / 2,
+          w: W,
+          h: H,
+          z: 0,
+          data: { url, title: name, size },
+        });
+        off += 30;
+      } catch (err) {
+        alert('PDF upload failed: ' + (err as Error).message);
       }
     }
   }
@@ -434,6 +456,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onSetMergeTarget={setMergeTargetId}
             onMerge={onMerge}
             onOpenDocument={onOpenDocument}
+            onOpenPdf={onOpenPdf}
           />
         ))}
       </div>

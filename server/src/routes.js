@@ -96,6 +96,16 @@ export function makeRoutes({ uploadDir }) {
     },
   });
 
+  // Separate uploader for PDFs — larger size limit, stricter mimetype.
+  const uploadPdf = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype !== 'application/pdf') return cb(new Error('Only PDFs allowed'));
+      cb(null, true);
+    },
+  });
+
   const r = Router();
 
   // Create a new room. The user-supplied name is BOTH the human display
@@ -234,6 +244,28 @@ export function makeRoutes({ uploadDir }) {
       res.json({ url });
     } catch (err) {
       console.error('[upload] failed:', err);
+      res.status(500).json({ error: 'upload_failed', detail: err.message });
+    }
+  });
+
+  // Upload a PDF; returns a public URL plus original filename + byte size.
+  // Stored alongside images via the same storage backend (Supabase or disk).
+  r.post('/upload-pdf', uploadPdf.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'no_file' });
+    const original = (req.file.originalname || 'document.pdf').replace(/[\r\n]/g, '');
+    const safeStem = original.replace(/\.pdf$/i, '').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 40) || 'document';
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeStem}.pdf`;
+    try {
+      const { url } = await storageUpload({
+        buffer: req.file.buffer,
+        filename,
+        mimetype: 'application/pdf',
+        localDir: uploadDir,
+      });
+      console.log(`[upload-pdf] mode=${STORAGE_MODE} -> ${url}`);
+      res.json({ url, name: original, size: req.file.size });
+    } catch (err) {
+      console.error('[upload-pdf] failed:', err);
       res.status(500).json({ error: 'upload_failed', detail: err.message });
     }
   });

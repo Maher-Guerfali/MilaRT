@@ -12,6 +12,7 @@ import TutorialModal from '../components/TutorialModal';
 import AIPreviewModal from '../components/AIPreviewModal';
 import StoragePanel from '../components/StoragePanel';
 import DocumentEditor from '../components/DocumentEditor';
+import PdfViewer from '../components/PdfViewer';
 import { useHistory } from '../hooks/useHistory';
 
 interface Snap {
@@ -35,6 +36,7 @@ export default function BoardPage() {
   const [isMove, setIsMove] = useState(true);
   const [drawOpen, setDrawOpen] = useState(false);
   const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
+  const [openPdfId, setOpenPdfId] = useState<string | null>(null);
   const [drawTool, setDrawTool] = useState<DrawTool>('pencil');
   const [drawColor, setDrawColor] = useState('#1a1510');
   const [penSize, setPenSize] = useState<SizeKey>('md');
@@ -449,6 +451,7 @@ export default function BoardPage() {
           onRestoreFromStorageAt={restoreFromStorageAt}
           onMerge={mergeItems}
           onOpenDocument={setOpenDocumentId}
+          onOpenPdf={setOpenPdfId}
         />
 
         <CanvasDock
@@ -496,6 +499,12 @@ export default function BoardPage() {
             onClose={() => setOpenDocumentId(null)}
           />
         );
+      })()}
+
+      {openPdfId && (() => {
+        const pdf = items.find((it) => it.id === openPdfId);
+        if (!pdf) return null;
+        return <PdfViewer item={pdf} onClose={() => setOpenPdfId(null)} />;
       })()}
     </div>
   );

@@ -43,6 +43,16 @@ export const DocumentIcon = wrap(
 
 export const EnterChevron = wrap(<path d="m9 18 6-6-6-6" strokeWidth={2.2} />);
 
+export const PdfIcon = wrap(
+  <>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5" />
+    <path d="M8.2 17v-3.5h1.1a1 1 0 0 1 0 2H8.2" />
+    <path d="M12 13.5v3.5h.9a1.5 1.5 0 0 0 1.5-1.5v-.5a1.5 1.5 0 0 0-1.5-1.5z" />
+    <path d="M16 17v-3.5h1.8M16 15.4h1.4" />
+  </>
+);
+
 export const UndoIcon = wrap(
   <>
     <polyline points="9 14 4 9 9 4" />

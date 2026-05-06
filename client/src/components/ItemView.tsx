@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
+import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, PdfData, Stroke } from '../types';
 import { api } from '../api';
-import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon } from './icons';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon, PdfIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -22,6 +22,7 @@ interface Props {
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  onOpenPdf?: (id: string) => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -44,7 +45,7 @@ export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
   isMergeTarget,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
-  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
+  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument, onOpenPdf,
 }: Props) {
   const mergeTargetIdRef = useRef<string | null>(null);
   // Drag-tracking. `wasSelected` records whether the item was already
@@ -269,6 +270,8 @@ export default function ItemView({
         setEditing(true);
       } else if (item.type === 'document' && onOpenDocument) {
         onOpenDocument(item.id);
+      } else if (item.type === 'pdf' && onOpenPdf) {
+        onOpenPdf(item.id);
       }
     }
   }
@@ -332,6 +335,9 @@ export default function ItemView({
       {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
       {item.type === 'document' && (
         <DocumentBox item={item} selected={selected} onOpen={() => onOpenDocument?.(item.id)} />
+      )}
+      {item.type === 'pdf' && (
+        <PdfBox item={item} selected={selected} onOpen={() => onOpenPdf?.(item.id)} />
       )}
 
       {/* Drag grip — fixed screen size even while the canvas is zoomed.
@@ -1216,6 +1222,64 @@ function DocumentBox({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); onOpen(); }}
         className="mb-2 mx-2 h-7 rounded-md text-[10.5px] font-bold transition-colors"
+        style={{
+          background: '#D97435',
+          color: '#fff',
+        }}
+      >Open</button>
+    </div>
+  );
+}
+
+function PdfBox({
+  item, selected, onOpen,
+}: { item: BaseItem; selected: boolean; onOpen: () => void }) {
+  const d = item.data as Partial<PdfData>;
+  const title = d.title || 'Untitled.pdf';
+  const sizeKb = typeof d.size === 'number' ? Math.max(1, Math.round(d.size / 1024)) : null;
+  const sizeLabel = sizeKb == null
+    ? ''
+    : sizeKb >= 1024
+      ? `${(sizeKb / 1024).toFixed(1)} MB`
+      : `${sizeKb} KB`;
+
+  return (
+    <div
+      className="w-full h-full rounded-2xl bg-white flex flex-col overflow-hidden"
+      style={{
+        boxShadow: selected
+          ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)'
+          : '0 2px 10px rgba(26,21,16,0.09)',
+        border: '1px solid rgba(26,21,16,0.06)',
+      }}
+    >
+      <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1.5 text-ink/55">
+        <PdfIcon size={12} />
+        <span className="text-[9px] font-bold uppercase tracking-[0.07em]">Pdf</span>
+        {sizeLabel && (
+          <span className="ml-auto text-[9px] font-bold text-ink/40">{sizeLabel}</span>
+        )}
+      </div>
+      <div
+        className="flex-1 mt-1 mx-2 mb-1.5 rounded-md flex items-center justify-center"
+        style={{
+          background: 'linear-gradient(180deg, rgba(217,116,53,0.08), rgba(217,116,53,0.02))',
+          border: '1px dashed rgba(217,116,53,0.30)',
+        }}
+      >
+        <span style={{ color: '#D97435' }}>
+          <PdfIcon size={48} />
+        </span>
+      </div>
+      <div
+        className="px-2.5 text-[12px] font-bold text-ink truncate"
+        title={title}
+      >{title}</div>
+      <button
+        data-no-item-drag
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        className="mt-1.5 mb-2 mx-2 h-7 rounded-md text-[10.5px] font-bold transition-colors"
         style={{
           background: '#D97435',
           color: '#fff',
