@@ -383,6 +383,137 @@ Return operations even if the request has no effect (empty array is valid).`;
     }
   });
 
+  // ── AI whiteboard / paper scan ────────────────────────────────────
+  // POST /api/ai/whiteboard-scan
+  // Body: { imageDataUrl: string }   // base64 data: URL of the photo
+  // Returns: { blocks: ScanBlock[], explanation: string, photo: { w, h } }
+  //
+  // ScanBlock = {
+  //   kind: 'sticky' | 'text',
+  //   text: string,
+  //   color: string | null,         // hex, only when kind === 'sticky'
+  //   bbox: { x, y, w, h }          // normalized 0..1 (origin top-left)
+  // }
+  //
+  // The client maps these normalized boxes into world coordinates centred
+  // on the current viewport, preserving the spatial layout of the photo.
+  r.post('/ai/whiteboard-scan', async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
+    }
+
+    const { imageDataUrl } = req.body || {};
+    if (!imageDataUrl || typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:')) {
+      return res.status(400).json({ error: 'missing imageDataUrl (expected a data: URL)' });
+    }
+
+    const systemMessage = `You are a vision assistant that converts a photograph of a real-world whiteboard, sketchbook, or sticky-note wall into structured digital blocks for a Milanote-style canvas.
+
+Identify every distinct piece of written content in the photo and return it as a "block". Each block must have:
+- kind: "sticky" if the content sits on a coloured square sticky-note background; otherwise "text" (free handwriting, titles, lists, anything not on a sticky).
+- text: the full transcribed content of that block. Preserve line breaks with \\n. Be a careful OCR — handwriting is often messy. If unsure of a word, give your best guess. Do NOT add commentary, headers, or bullet markers that aren't in the source.
+- color: only for kind="sticky" — pick the closest of these hex colours to the actual sticky colour: yellow "#FFF3C4", pink "#FFDEDE", green "#D4F0DE", blue "#E0EDFF", purple "#F0E4FF". For text blocks set color to null.
+- bbox: tight axis-aligned bounding box of the block in NORMALIZED coordinates relative to the full image, where (0,0) is the top-left and (1,1) is the bottom-right. Provide x, y, w, h all in [0,1]. Boxes may overlap slightly but should each enclose a single coherent block.
+
+Rules:
+- Do NOT merge separate sticky notes. Each sticky is its own block.
+- Group continuous handwriting that clearly belongs together (e.g. a numbered list) into ONE text block, but split obviously separate sections.
+- Skip pure decoration (arrows, scribbles, doodles with no readable content). It's fine to return zero blocks.
+- Do NOT invent content that isn't in the photo.
+- Keep "explanation" to a single short sentence describing what you saw.
+
+Return via the return_whiteboard_scan tool.`;
+
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'return_whiteboard_scan',
+          description: 'Return the structured transcription of the whiteboard photo.',
+          parameters: {
+            type: 'object',
+            properties: {
+              explanation: { type: 'string' },
+              blocks: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    kind: { type: 'string', enum: ['sticky', 'text'] },
+                    text: { type: 'string' },
+                    color: { type: ['string', 'null'] },
+                    bbox: {
+                      type: 'object',
+                      properties: {
+                        x: { type: 'number' },
+                        y: { type: 'number' },
+                        w: { type: 'number' },
+                        h: { type: 'number' },
+                      },
+                      required: ['x', 'y', 'w', 'h'],
+                    },
+                  },
+                  required: ['kind', 'text', 'bbox'],
+                },
+              },
+            },
+            required: ['explanation', 'blocks'],
+          },
+        },
+      },
+    ];
+
+    try {
+      const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: systemMessage },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Transcribe this whiteboard photo into structured blocks.' },
+                { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
+              ],
+            },
+          ],
+          tools,
+          tool_choice: { type: 'function', function: { name: 'return_whiteboard_scan' } },
+          max_tokens: 4000,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text().catch(() => '');
+        console.error('[ai/whiteboard-scan] OpenAI error:', aiRes.status, errText.slice(0, 300));
+        return res.status(502).json({ error: `OpenAI error ${aiRes.status}`, detail: errText.slice(0, 300) });
+      }
+
+      const aiData = await aiRes.json();
+      const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+      if (!toolCall?.function?.arguments) {
+        return res.status(502).json({ error: 'AI returned no scan' });
+      }
+
+      const result = JSON.parse(toolCall.function.arguments);
+      const blocks = Array.isArray(result.blocks) ? result.blocks : [];
+      console.log(`[ai/whiteboard-scan] ${blocks.length} blocks`);
+      res.json({
+        blocks,
+        explanation: typeof result.explanation === 'string' ? result.explanation : '',
+      });
+    } catch (err) {
+      console.error('[ai/whiteboard-scan] error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── AI image editing (image-to-image) ─────────────────────────────
   // POST /api/ai/image-edit
   // Body: { imageDataUrl: string (base64 PNG), prompt: string }

@@ -10,6 +10,7 @@ import DrawTray, { type DrawTool, type SizeKey } from '../components/DrawTray';
 import SettingsModal from '../components/SettingsModal';
 import TutorialModal from '../components/TutorialModal';
 import AIPreviewModal from '../components/AIPreviewModal';
+import CameraScanModal from '../components/CameraScanModal';
 import StoragePanel from '../components/StoragePanel';
 import DocumentEditor from '../components/DocumentEditor';
 import { useHistory } from '../hooks/useHistory';
@@ -51,6 +52,7 @@ export default function BoardPage() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [cameraScanOpen, setCameraScanOpen] = useState(false);
   const canvasRef = useRef<CanvasHandle>(null);
 
   // ── AI assistant state ─────────────────────────────────────────────
@@ -391,10 +393,23 @@ export default function BoardPage() {
         onRefresh={load}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenTutorial={() => setTutorialOpen(true)}
+        onOpenCameraScan={() => setCameraScanOpen(true)}
         saving={saving}
         isDrawMode={!isMove && drawOpen}
         onActivateMove={activateMove}
       />
+      {cameraScanOpen && (
+        <CameraScanModal
+          getCenter={() => canvasRef.current?.getCenter() ?? { x: 0, y: 0 }}
+          onCommit={(scanned) => {
+            setItems((xs) => {
+              const base = xs.length;
+              return [...xs, ...scanned.map((it, i) => ({ ...it, z: base + i }))];
+            });
+          }}
+          onClose={() => setCameraScanOpen(false)}
+        />
+      )}
       <SettingsModal
         open={settingsOpen}
         roomCode={code!}

@@ -126,4 +126,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ imageDataUrl, prompt }),
     }),
+
+  /** Vision-scan a whiteboard / paper photo. Returns normalized blocks the
+   *  client maps onto the canvas at the current viewport centre. */
+  aiWhiteboardScan: (imageDataUrl: string) =>
+    req<{
+      blocks: Array<{
+        kind: 'sticky' | 'text';
+        text: string;
+        color: string | null;
+        bbox: { x: number; y: number; w: number; h: number };
+      }>;
+      explanation: string;
+    }>('/api/ai/whiteboard-scan', {
+      method: 'POST',
+      body: JSON.stringify({ imageDataUrl }),
+    }),
 };

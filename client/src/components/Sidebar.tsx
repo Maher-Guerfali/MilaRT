@@ -4,7 +4,7 @@ import type { BaseItem } from '../types';
 import { api } from '../api';
 import {
   StickyIcon, LinkIcon, BoardIcon, ImageIcon, TextIcon, DocumentIcon,
-  SettingsIcon,
+  SettingsIcon, CameraIcon,
 } from './icons';
 import Tooltip from './Tooltip';
 
@@ -16,6 +16,7 @@ interface Props {
   onRefresh: () => void;
   onOpenSettings: () => void;
   onOpenTutorial: () => void;
+  onOpenCameraScan: () => void;
   saving: 'idle' | 'saving' | 'saved' | 'error';
   isDrawMode?: boolean;
   onActivateMove?: () => void;
@@ -90,7 +91,7 @@ function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
   );
 }
 
-export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, onOpenTutorial, isDrawMode, onActivateMove }: Props) {
+export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, onOpenTutorial, onOpenCameraScan, isDrawMode, onActivateMove }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   function addItem(tmpl: ItemTemplate) {
@@ -98,11 +99,22 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
     onAdd(tmpl);
   }
 
+  function openCameraScan() {
+    if (isDrawMode && onActivateMove) onActivateMove();
+    onOpenCameraScan();
+  }
+
   function makeTemplate(partial: Partial<BaseItem>): ItemTemplate {
     return template(partial);
   }
 
   const tools: { label: string; hint: string; Icon: ComponentType<{ size?: number }>; action: () => void; dragData?: string }[] = [
+    {
+      label: 'Scan',
+      hint: 'Scan a whiteboard or notebook with AI',
+      Icon: CameraIcon,
+      action: openCameraScan,
+    },
     {
       label: 'Sticky',
       hint: 'Drag or tap to add a sticky note',
