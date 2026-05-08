@@ -1,12 +1,14 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { connectDB } from './db.js';
 import { makeRoutes } from './routes.js';
 import { STORAGE_MODE } from './storage.js';
+import { attachRealtime } from './realtime.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4000);
@@ -80,9 +82,13 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: err.message });
 });
 
+// Wrap Express in an http.Server so Socket.IO can attach for realtime presence.
+const server = http.createServer(app);
+attachRealtime(server);
+
 connectDB(MONGODB_URI)
   .then(() => {
-    app.listen(PORT, () => console.log(`[server] listening on :${PORT}`));
+    server.listen(PORT, () => console.log(`[server] listening on :${PORT} (http + socket.io)`));
   })
   .catch((err) => {
     console.error('[db] failed to connect:', err.message);

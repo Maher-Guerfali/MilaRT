@@ -11,9 +11,12 @@ import SettingsModal from '../components/SettingsModal';
 import TutorialModal from '../components/TutorialModal';
 import AIPreviewModal from '../components/AIPreviewModal';
 import CameraScanModal from '../components/CameraScanModal';
+import IdentityPromptModal from '../components/IdentityPromptModal';
 import StoragePanel from '../components/StoragePanel';
 import DocumentEditor from '../components/DocumentEditor';
 import { useHistory } from '../hooks/useHistory';
+import { usePresence } from '../hooks/usePresence';
+import { loadIdentity, saveIdentity, type Identity } from '../lib/identity';
 
 interface Snap {
   items: BaseItem[];
@@ -53,6 +56,10 @@ export default function BoardPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
+
+  // ── Live presence (other people's cursors in this room) ────────────
+  const [identity, setIdentity] = useState<Identity | null>(() => loadIdentity());
+  const { peers, sendCursor } = usePresence(code, identity);
   const canvasRef = useRef<CanvasHandle>(null);
 
   // ── AI assistant state ─────────────────────────────────────────────
@@ -369,6 +376,9 @@ export default function BoardPage() {
 
   return (
     <div className="h-full w-full flex" style={{ background: '#F3EDE0' }}>
+      {!identity && (
+        <IdentityPromptModal onSubmit={(name) => setIdentity(saveIdentity(name))} />
+      )}
       {tutorialOpen && (
         <TutorialModal onClose={() => {
           setTutorialOpen(false);
@@ -464,6 +474,8 @@ export default function BoardPage() {
           onRestoreFromStorageAt={restoreFromStorageAt}
           onMerge={mergeItems}
           onOpenDocument={setOpenDocumentId}
+          peers={peers}
+          onLocalCursorMove={sendCursor}
         />
 
         <CanvasDock

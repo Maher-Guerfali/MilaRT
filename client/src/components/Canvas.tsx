@@ -5,7 +5,9 @@ import { api } from '../api';
 import ItemView from './ItemView';
 import StrokeLayer from './StrokeLayer';
 import MiniMap from './MiniMap';
+import PresenceLayer from './PresenceLayer';
 import type { DrawTool, SizeKey } from './DrawTray';
+import type { Peer } from '../hooks/usePresence';
 import { PlusIcon, MinusIcon, FitIcon } from './icons';
 
 interface Props {
@@ -31,6 +33,10 @@ interface Props {
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  /** Remote peers' cursors (rendered as an overlay). */
+  peers?: Peer[];
+  /** Called with the local cursor's world coords. Internally throttled. */
+  onLocalCursorMove?: (x: number, y: number) => void;
 }
 
 export interface CanvasHandle {
@@ -60,6 +66,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
     onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument,
+    peers, onLocalCursorMove,
   } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -229,6 +236,27 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     panStart.current = null;
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
+
+  // Broadcast our cursor at ~30Hz to any presence channel the parent wires
+  // up. Native pointermove on the wrap fires regardless of children calling
+  // stopPropagation, so cursors track correctly while hovering items too.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || !onLocalCursorMove) return;
+    let last = 0;
+    function onMove(e: PointerEvent) {
+      const now = performance.now();
+      if (now - last < 33) return;
+      last = now;
+      const v = viewRef.current;
+      const rect = el!.getBoundingClientRect();
+      const wx = (e.clientX - rect.left - v.x) / v.scale;
+      const wy = (e.clientY - rect.top - v.y) / v.scale;
+      onLocalCursorMove!(wx, wy);
+    }
+    el.addEventListener('pointermove', onMove);
+    return () => el.removeEventListener('pointermove', onMove);
+  }, [onLocalCursorMove]);
 
   // Native wheel listener so we can preventDefault() — the browser would
   // otherwise zoom the page itself on Ctrl+wheel / trackpad-pinch.
@@ -464,6 +492,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             className="animate-marchAnt"
           />
         </svg>
+      )}
+
+      {peers && peers.length > 0 && (
+        <PresenceLayer peers={peers} view={view} />
       )}
 
       {/* Mini-map sits above the zoom dock in the bottom-right. */}
