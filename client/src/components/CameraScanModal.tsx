@@ -3,7 +3,6 @@ import { nanoid } from 'nanoid';
 import { api } from '../api';
 import type { BaseItem, Stroke } from '../types';
 import { CameraIcon, ImageIcon, CloseIcon } from './icons';
-import HERSHEY_FUTURAL from '../lib/hersheyFutural.json';
 
 interface Props {
   /** World-space centre of the current viewport — items land here. */
@@ -14,7 +13,7 @@ interface Props {
   onClose: () => void;
 }
 
-type ImportMode = 'digital' | 'mix' | 'trace';
+type ImportMode = 'digital' | 'sketch';
 
 type ScanBlock = {
   kind: 'sticky' | 'text';
@@ -162,124 +161,6 @@ async function tracePhotoToStrokes(
   return { strokes, inkColor: colorHex };
 }
 
-// Render OCR'd text from each block as Hershey single-stroke polylines and
-// map them into world coords inside that block's bbox. Hershey is a 1960s
-// pen-plotter font where each glyph is one or more polylines (no fills, no
-// outlines), so the result reads as clean handwriting-style single lines —
-// exactly what's missing from outline-traced text.
-function textBlocksToHersheyStrokes(
-  blocks: ScanBlock[],
-  photoAspect: number,
-  centre: { x: number; y: number },
-  color: string,
-): Stroke[] {
-  const regionW = TARGET_REGION_WIDTH;
-  const regionH = regionW / photoAspect;
-  const left = centre.x - regionW / 2;
-  const top = centre.y - regionH / 2;
-  const STROKE_W = 1.4;
-  // Hershey simplex glyphs span roughly y∈[0,22] above baseline + descender;
-  // 32 leaves a hair of line-spacing.
-  const LINE_HEIGHT = 32;
-
-  const out: Stroke[] = [];
-  for (const block of blocks) {
-    const text = (block.text ?? '').trim();
-    if (!text) continue;
-
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) continue;
-
-    const wbX = left + clamp01(block.bbox.x) * regionW;
-    const wbY = top + clamp01(block.bbox.y) * regionH;
-    const wbW = clamp01(block.bbox.w) * regionW;
-    const wbH = clamp01(block.bbox.h) * regionH;
-
-    const rendered = lines.map(renderHersheyLine);
-    const maxLineW = Math.max(0, ...rendered.map((r) => r.width));
-    if (maxLineW <= 0) continue;
-    const totalH = LINE_HEIGHT * rendered.length;
-    const scale = Math.min(wbW / maxLineW, wbH / totalH);
-    if (!Number.isFinite(scale) || scale <= 0) continue;
-
-    for (let li = 0; li < rendered.length; li++) {
-      const yShift = li * LINE_HEIGHT;
-      for (const poly of rendered[li].polylines) {
-        if (poly.length < 4) continue;
-        const points: number[] = [];
-        for (let i = 0; i < poly.length; i += 2) {
-          points.push(wbX + poly[i] * scale, wbY + (poly[i + 1] + yShift) * scale, 0.6);
-        }
-        out.push({ color, width: STROKE_W, tool: 'pen', points });
-      }
-    }
-  }
-  return out;
-}
-
-// Walk one line of text through the Hershey "futural" font, accumulating
-// pen-down polylines and the cursor advance.
-//
-// Hershey's `o` field is *not* the visual width — it's a half-width metric
-// that leaves glyphs overlapping if you naively use it as advance. Instead
-// we measure each glyph's real bounding box from its strokes and use that
-// + a constant inter-char padding, which is what the user actually reads as
-// comfortable letter spacing.
-function renderHersheyLine(text: string): { polylines: number[][]; width: number } {
-  const polylines: number[][] = [];
-  let cursorX = 0;
-  const CHAR_PAD = 3;     // gap between adjacent glyphs
-  const SPACE_W = 12;     // width of an ASCII space
-
-  for (let ci = 0; ci < text.length; ci++) {
-    const code = text.charCodeAt(ci);
-    if (code === 32 || code < 33 || code > 126) {
-      cursorX += SPACE_W;
-      continue;
-    }
-    const glyph = HERSHEY_FUTURAL.chars[code - 33];
-    if (!glyph || !glyph.d) {
-      cursorX += SPACE_W;
-      continue;
-    }
-
-    const tokens = glyph.d.split(/\s+/);
-    let minX = Infinity, maxX = -Infinity;
-    for (const tok of tokens) {
-      const body = (tok[0] === 'M' || tok[0] === 'L') ? tok.slice(1) : tok;
-      const m = body.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
-      if (!m) continue;
-      const x = parseFloat(m[1]);
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-    }
-    if (!Number.isFinite(minX)) {
-      cursorX += SPACE_W;
-      continue;
-    }
-    const offsetX = cursorX - minX;
-
-    let cur: number[] = [];
-    for (const tok of tokens) {
-      let body = tok;
-      if (tok[0] === 'M') {
-        if (cur.length >= 4) polylines.push(cur);
-        cur = [];
-        body = tok.slice(1);
-      } else if (tok[0] === 'L') {
-        body = tok.slice(1);
-      }
-      const m = body.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
-      if (!m) continue;
-      cur.push(parseFloat(m[1]) + offsetX, parseFloat(m[2]));
-    }
-    if (cur.length >= 4) polylines.push(cur);
-
-    cursorX += Math.max(maxX - minX, glyph.o ?? 0, 4) + CHAR_PAD;
-  }
-  return { polylines, width: cursorX };
-}
-
 // Detect the dominant background colour, measure each pixel's RGB-space
 // distance from it, and Otsu-threshold the distance histogram to split
 // ink from background. Works for coloured ink (red/green/blue/highlighter)
@@ -360,7 +241,7 @@ function rgbToHex(r: number, g: number, b: number) {
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
-type Stage = 'pick' | 'preview' | 'scanning' | 'review' | 'tracing' | 'error';
+type Stage = 'pick' | 'preview' | 'scanning' | 'review' | 'cleaning' | 'tracing' | 'error';
 
 export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, onClose }: Props) {
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -397,68 +278,59 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
     }
   }
 
-  async function runScan() {
+  // From the preview stage, branch on the user's chosen import mode.
+  async function proceed() {
     if (!compressed) return;
-    setStage('scanning');
+
+    if (mode === 'digital') {
+      setStage('scanning');
+      try {
+        const res = await api.aiWhiteboardScan(compressed);
+        const found = res.blocks ?? [];
+        setBlocks(found);
+        setExplanation(res.explanation || '');
+        setAccepted(new Set(found.map((_, i) => i)));
+        setStage(found.length ? 'review' : 'error');
+        if (!found.length) setErrorMsg("Couldn't find any readable content in this photo.");
+      } catch (e) {
+        setErrorMsg(`Scan failed: ${(e as Error).message}`);
+        setStage('error');
+      }
+      return;
+    }
+
+    // Sketch mode: gpt-image-1 cleans the photo, then we trace the clean
+    // version. No bbox / OCR work — the entire image is going on canvas.
+    if (!onCommitStrokes) {
+      setErrorMsg('Sketch mode is not available here.');
+      setStage('error');
+      return;
+    }
+    setStage('cleaning');
     try {
-      const res = await api.aiWhiteboardScan(compressed);
-      const found = res.blocks ?? [];
-      setBlocks(found);
-      setExplanation(res.explanation || '');
-      setAccepted(new Set(found.map((_, i) => i)));
-      setStage(found.length ? 'review' : 'error');
-      if (!found.length) setErrorMsg("Couldn't find any readable content in this photo.");
+      const cleaned = await api.aiWhiteboardClean(compressed, imgAspect);
+      setStage('tracing');
+      const bitmap = await fetch(cleaned.dataUrl)
+        .then((r) => r.blob())
+        .then(createImageBitmap);
+      // Use the cleaned image's own aspect for placement; gpt-image-1 may
+      // have switched to one of its supported sizes which can differ slightly.
+      const cleanedAspect = bitmap.width / bitmap.height;
+      const { strokes } = await tracePhotoToStrokes(bitmap, cleanedAspect, getCenter());
+      if (strokes.length) onCommitStrokes(strokes);
+      onClose();
     } catch (e) {
-      setErrorMsg(`Scan failed: ${(e as Error).message}`);
+      setErrorMsg(`Sketch import failed: ${(e as Error).message}`);
       setStage('error');
     }
   }
 
-  async function commit() {
-    const acceptedIndices = blocks
-      .map((_, i) => i)
-      .filter((i) => accepted.has(i));
-    const chosen = acceptedIndices.map((i) => blocks[i]);
-    const centre = getCenter();
-
-    // Trace modes need the photo + the strokes channel, otherwise fall back
-    // to digital so nothing is silently dropped.
-    const canTrace = !!onCommitStrokes && !!compressed;
-    const effectiveMode: ImportMode = canTrace ? mode : 'digital';
-
-    if (effectiveMode === 'digital') {
-      const items = blocksToItems(chosen, imgAspect, centre);
-      if (items.length) onCommit(items);
-      onClose();
-      return;
-    }
-
-    setStage('tracing');
-    try {
-      const bitmap = await fetch(compressed!).then((r) => r.blob()).then(createImageBitmap);
-
-      if (effectiveMode === 'mix') {
-        // Drawings: trace the photo with text bboxes white-masked so text
-        // outlines don't appear. Text: render OCR'd content as Hershey
-        // single-stroke polylines inside each block's bbox so it reads as
-        // clean handwriting instead of hollow letter outlines.
-        const maskBboxes = chosen.map((b) => b.bbox);
-        const { strokes: drawingStrokes, inkColor } =
-          await tracePhotoToStrokes(bitmap, imgAspect, centre, maskBboxes);
-        const textStrokes = textBlocksToHersheyStrokes(chosen, imgAspect, centre, inkColor);
-        const all = [...drawingStrokes, ...textStrokes];
-        if (all.length) onCommitStrokes!(all);
-      } else {
-        // 'trace' — whole photo as strokes, including text. Block selection
-        // is irrelevant here.
-        const { strokes } = await tracePhotoToStrokes(bitmap, imgAspect, centre);
-        if (strokes.length) onCommitStrokes!(strokes);
-      }
-      onClose();
-    } catch (e) {
-      setErrorMsg(`Trace failed: ${(e as Error).message}`);
-      setStage('error');
-    }
+  // Digital mode: commit the OCR'd blocks the user accepted.
+  function commitDigital() {
+    const chosen = blocks.filter((_, i) => accepted.has(i));
+    const items = blocksToItems(chosen, imgAspect, getCenter());
+    if (items.length) onCommit(items);
+    onClose();
   }
 
   function toggleBlock(i: number) {
@@ -540,13 +412,40 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
 
         {stage === 'preview' && previewUrl && (
           <>
-            <div className="px-5 py-4">
+            <div className="px-5 pt-4 pb-3">
               <img
                 src={previewUrl}
                 alt="Whiteboard preview"
-                className="w-full max-h-[50vh] object-contain rounded-xl border border-ink/10"
+                className="w-full max-h-[42vh] object-contain rounded-xl border border-ink/10"
               />
             </div>
+            {onCommitStrokes && (
+              <div className="px-5 pb-2">
+                <div className="flex p-0.5 rounded-xl border border-ink/12 bg-ink/[0.03] text-[12px] font-semibold">
+                  <button
+                    onClick={() => setMode('digital')}
+                    className={`flex-1 h-8 rounded-lg transition-colors ${
+                      mode === 'digital' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
+                    }`}
+                  >
+                    Digital text
+                  </button>
+                  <button
+                    onClick={() => setMode('sketch')}
+                    className={`flex-1 h-8 rounded-lg transition-colors ${
+                      mode === 'sketch' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
+                    }`}
+                  >
+                    Sketch
+                  </button>
+                </div>
+                <p className="text-[11px] text-ink/45 mt-1.5 leading-snug">
+                  {mode === 'digital'
+                    ? 'Recognises text and drops typed sticky notes / text items on the canvas. Drawings are ignored.'
+                    : 'AI redraws the photo cleanly (white background, crisp ink, same layout & colours) and traces it as editable pencil strokes.'}
+                </p>
+              </div>
+            )}
             <div className="px-4 pb-4 pt-1 flex gap-2">
               <button
                 onClick={() => { setPreviewUrl(null); setCompressed(null); setStage('pick'); }}
@@ -555,11 +454,11 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
                 Pick different
               </button>
               <button
-                onClick={runScan}
+                onClick={proceed}
                 className="flex-1 h-9 rounded-xl text-[13px] font-semibold text-white transition-colors"
                 style={{ background: '#D97435' }}
               >
-                Scan with AI
+                {mode === 'digital' ? 'Scan with AI' : 'Redraw + import'}
               </button>
             </div>
           </>
@@ -569,6 +468,14 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
           <div className="px-5 py-10 flex flex-col items-center gap-3 text-ink/60">
             <Spinner />
             <p className="text-[12.5px]">Reading the whiteboard…</p>
+          </div>
+        )}
+
+        {stage === 'cleaning' && (
+          <div className="px-5 py-10 flex flex-col items-center gap-3 text-ink/60">
+            <Spinner />
+            <p className="text-[12.5px]">AI is redrawing your photo cleanly…</p>
+            <p className="text-[10.5px] text-ink/40">This usually takes 10–20 seconds.</p>
           </div>
         )}
 
@@ -583,43 +490,6 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
           <>
             {explanation && (
               <p className="px-5 pt-3 text-[12px] text-ink/60 italic">{explanation}</p>
-            )}
-            {onCommitStrokes && (
-              <div className="px-5 pt-3">
-                <div className="flex p-0.5 rounded-xl border border-ink/12 bg-ink/[0.03] text-[11px] font-semibold">
-                  <button
-                    onClick={() => setMode('digital')}
-                    className={`flex-1 h-7 rounded-lg transition-colors ${
-                      mode === 'digital' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
-                    }`}
-                  >
-                    Digital text
-                  </button>
-                  <button
-                    onClick={() => setMode('mix')}
-                    className={`flex-1 h-7 rounded-lg transition-colors ${
-                      mode === 'mix' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
-                    }`}
-                  >
-                    Sketches + text
-                  </button>
-                  <button
-                    onClick={() => setMode('trace')}
-                    className={`flex-1 h-7 rounded-lg transition-colors ${
-                      mode === 'trace' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
-                    }`}
-                  >
-                    Trace everything
-                  </button>
-                </div>
-                <p className="text-[11px] text-ink/45 mt-1.5 leading-snug">
-                  {mode === 'digital'
-                    ? 'Imports as typed sticky notes and text — fully editable.'
-                    : mode === 'mix'
-                    ? 'Drawings come in as traced pencil strokes; recognised text is re-drawn in a clean single-line handwriting font so it stays readable.'
-                    : 'Imports the entire photo as editable pencil strokes (use the eraser to fix mistakes).'}
-                </p>
-              </div>
             )}
             <div className="px-4 py-3 flex flex-col gap-1.5 max-h-[45vh] overflow-y-auto">
               {blocks.map((b, i) => {
@@ -659,16 +529,12 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
                 Cancel
               </button>
               <button
-                onClick={commit}
-                disabled={mode !== 'trace' && accepted.size === 0}
+                onClick={commitDigital}
+                disabled={accepted.size === 0}
                 className="flex-1 h-9 rounded-xl text-[13px] font-semibold text-white transition-colors disabled:opacity-40"
                 style={{ background: '#D97435' }}
               >
-                {mode === 'trace'
-                  ? 'Trace photo'
-                  : mode === 'mix'
-                  ? `Draw ${accepted.size} text + sketches`
-                  : `Add ${accepted.size} to canvas`}
+                Add {accepted.size} to canvas
               </button>
             </div>
           </>

@@ -551,6 +551,72 @@ Return via the return_whiteboard_scan tool.`;
     }
   });
 
+  // ── AI whiteboard cleanup (gpt-image-1 redraw) ────────────────────
+  // POST /api/ai/whiteboard-clean
+  // Body: { imageDataUrl: string, aspect?: number }   // aspect = w/h
+  // Returns: { dataUrl: string }   // gpt-image-1 redrawn PNG, base64 data URL
+  //
+  // Sends the photo to gpt-image-1 with a "redraw cleanly, same layout, same
+  // ink colors, white background" prompt. The returned image is then traced
+  // by the client using the existing whiteboard-trace endpoint.
+  r.post('/ai/whiteboard-clean', async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
+    }
+    const { imageDataUrl, aspect } = req.body || {};
+    if (!imageDataUrl || typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:')) {
+      return res.status(400).json({ error: 'missing imageDataUrl' });
+    }
+    const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/s);
+    if (!match) return res.status(400).json({ error: 'invalid imageDataUrl' });
+    const imageBuffer = Buffer.from(match[2], 'base64');
+
+    // Pick the gpt-image-1 size whose aspect matches the input most closely.
+    const a = Number(aspect) || 1;
+    const size = a > 1.2 ? '1536x1024' : a < 0.83 ? '1024x1536' : '1024x1024';
+
+    const prompt =
+      'Redraw this photo of a whiteboard, sticky-note wall, or notebook page as a perfectly clean version. ' +
+      'Reproduce every piece of handwriting and every drawing in the exact same layout and the same ink colours as the original. ' +
+      'Make all lines crisp and clearly readable. ' +
+      'The output must have a pure white background with no shadows, no glare, no paper texture — only the writing and drawings on white. ' +
+      'Do not add, remove, rearrange, or stylise any content.';
+
+    try {
+      const formData = new FormData();
+      formData.append('model', 'gpt-image-1');
+      formData.append('prompt', prompt);
+      formData.append('n', '1');
+      formData.append('size', size);
+      formData.append('quality', 'medium');
+      const blob = new Blob([imageBuffer], { type: 'image/png' });
+      formData.append('image', blob, 'image.png');
+
+      const aiRes = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: formData,
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text().catch(() => '');
+        console.error('[ai/whiteboard-clean] OpenAI error:', aiRes.status, errText.slice(0, 300));
+        return res.status(502).json({ error: `OpenAI error ${aiRes.status}`, detail: errText.slice(0, 300) });
+      }
+
+      const aiData = await aiRes.json();
+      const b64 = aiData?.data?.[0]?.b64_json;
+      if (!b64) return res.status(502).json({ error: 'No image in AI response' });
+
+      console.log(`[ai/whiteboard-clean] done size=${size} bytes=${b64.length}`);
+      res.json({ dataUrl: `data:image/png;base64,${b64}` });
+    } catch (err) {
+      console.error('[ai/whiteboard-clean] error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── AI image editing (image-to-image) ─────────────────────────────
   // POST /api/ai/image-edit
   // Body: { imageDataUrl: string (base64 PNG), prompt: string }

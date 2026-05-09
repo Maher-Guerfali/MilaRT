@@ -127,6 +127,15 @@ export const api = {
       body: JSON.stringify({ imageDataUrl, prompt }),
     }),
 
+  /** Send the photo to gpt-image-1 to redraw it cleanly (white background,
+   *  crisp ink, same layout + colours). Returns a base64 PNG data URL the
+   *  client then runs through the trace pipeline. */
+  aiWhiteboardClean: (imageDataUrl: string, aspect: number) =>
+    req<{ dataUrl: string }>('/api/ai/whiteboard-clean', {
+      method: 'POST',
+      body: JSON.stringify({ imageDataUrl, aspect }),
+    }),
+
   /** Trace cropped block images into editable polylines (one per ink shape).
    *  Coords are pixels in each region's own crop space — the client maps
    *  them back to world coords. */
