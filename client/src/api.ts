@@ -127,6 +127,15 @@ export const api = {
       body: JSON.stringify({ imageDataUrl, prompt }),
     }),
 
+  /** Trace cropped block images into editable polylines (one per ink shape).
+   *  Coords are pixels in each region's own crop space — the client maps
+   *  them back to world coords. */
+  aiWhiteboardTrace: (regions: { dataUrl: string }[]) =>
+    req<{ traces: Array<{ index: number; polylines: number[][] }> }>(
+      '/api/ai/whiteboard-trace',
+      { method: 'POST', body: JSON.stringify({ regions }) },
+    ),
+
   /** Vision-scan a whiteboard / paper photo. Returns normalized blocks the
    *  client maps onto the canvas at the current viewport centre. */
   aiWhiteboardScan: (imageDataUrl: string) =>

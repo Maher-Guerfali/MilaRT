@@ -417,6 +417,9 @@ export default function BoardPage() {
               return [...xs, ...scanned.map((it, i) => ({ ...it, z: base + i }))];
             });
           }}
+          onCommitStrokes={(traced) => {
+            setStrokes((prev) => [...prev, ...traced]);
+          }}
           onClose={() => setCameraScanOpen(false)}
         />
       )}

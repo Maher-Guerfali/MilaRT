@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
 import { customAlphabet } from 'nanoid';
+import potrace from 'potrace';
 import { Room, Board, Feedback } from './models.js';
 import { uploadImage as storageUpload, STORAGE_MODE } from './storage.js';
 
@@ -514,6 +515,42 @@ Return via the return_whiteboard_scan tool.`;
     }
   });
 
+  // ── AI whiteboard trace (handwriting → editable strokes) ──────────
+  // POST /api/ai/whiteboard-trace
+  // Body: { regions: [{ dataUrl: string }, ...] }   // PNG crops, one per block
+  // Returns: { traces: [{ index: number, polylines: number[][] }] }
+  // polylines are arrays of [x0,y0,x1,y1,...] in the region's own px coords.
+  // The client maps them onto the board the same way it maps scan blocks.
+  r.post('/ai/whiteboard-trace', async (req, res) => {
+    const { regions } = req.body || {};
+    if (!Array.isArray(regions) || regions.length === 0) {
+      return res.status(400).json({ error: 'missing regions' });
+    }
+    if (regions.length > 60) {
+      return res.status(400).json({ error: 'too many regions (max 60)' });
+    }
+
+    try {
+      const traces = [];
+      // Sequential — potrace is CPU-bound and parallel runs would just queue.
+      for (let i = 0; i < regions.length; i++) {
+        const r0 = regions[i];
+        const dataUrl = r0?.dataUrl;
+        if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) continue;
+        const m = dataUrl.match(/^data:[^;]+;base64,(.+)$/s);
+        if (!m) continue;
+        const buf = Buffer.from(m[1], 'base64');
+        const svg = await traceBuffer(buf);
+        const polylines = svgPathsToPolylines(svg);
+        if (polylines.length) traces.push({ index: i, polylines });
+      }
+      res.json({ traces });
+    } catch (err) {
+      console.error('[ai/whiteboard-trace] error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── AI image editing (image-to-image) ─────────────────────────────
   // POST /api/ai/image-edit
   // Body: { imageDataUrl: string (base64 PNG), prompt: string }
@@ -783,4 +820,112 @@ Return via the return_whiteboard_scan tool.`;
   });
 
   return r;
+}
+
+// ── potrace helpers (used by /api/ai/whiteboard-trace) ────────────────
+
+function traceBuffer(buf) {
+  return new Promise((resolve, reject) => {
+    potrace.trace(
+      buf,
+      {
+        threshold: -1,        // auto Otsu
+        turdSize: 2,          // drop tiny speckles
+        alphaMax: 1.0,
+        optCurve: true,
+        optTolerance: 0.4,
+        color: 'black',
+        background: 'transparent',
+      },
+      (err, svg) => (err ? reject(err) : resolve(svg)),
+    );
+  });
+}
+
+// Extract every <path d="..."> attribute from a potrace SVG, then flatten
+// each path's M / L / C / Z commands to polylines. Cubic Beziers are sampled
+// at 6 segments — enough to look smooth, not enough to bloat the payload.
+function svgPathsToPolylines(svg) {
+  if (typeof svg !== 'string') return [];
+  const out = [];
+  const re = /<path\b[^>]*\sd="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(svg)) !== null) {
+    for (const poly of flattenPathD(m[1], 6)) {
+      if (poly.length >= 4) out.push(poly);
+    }
+  }
+  return out;
+}
+
+function flattenPathD(d, segments) {
+  const tokens = d.match(/[MLCHVZmlchvz]|-?\d+(?:\.\d+)?/g) || [];
+  const polylines = [];
+  let cur = [];
+  let cx = 0, cy = 0, sx = 0, sy = 0;
+  let i = 0;
+  function pushCur() {
+    if (cur.length >= 4) polylines.push(cur);
+    cur = [];
+  }
+  while (i < tokens.length) {
+    const c = tokens[i++];
+    if (c === 'M' || c === 'm') {
+      const x = +tokens[i++], y = +tokens[i++];
+      pushCur();
+      if (c === 'm') { cx += x; cy += y; } else { cx = x; cy = y; }
+      sx = cx; sy = cy;
+      cur.push(cx, cy);
+      // Subsequent coord pairs after M are implicit L
+      while (i < tokens.length && /^-?\d/.test(tokens[i])) {
+        const lx = +tokens[i++], ly = +tokens[i++];
+        if (c === 'm') { cx += lx; cy += ly; } else { cx = lx; cy = ly; }
+        cur.push(cx, cy);
+      }
+    } else if (c === 'L' || c === 'l') {
+      while (i < tokens.length && /^-?\d/.test(tokens[i])) {
+        const x = +tokens[i++], y = +tokens[i++];
+        if (c === 'l') { cx += x; cy += y; } else { cx = x; cy = y; }
+        cur.push(cx, cy);
+      }
+    } else if (c === 'H' || c === 'h') {
+      while (i < tokens.length && /^-?\d/.test(tokens[i])) {
+        const x = +tokens[i++];
+        if (c === 'h') cx += x; else cx = x;
+        cur.push(cx, cy);
+      }
+    } else if (c === 'V' || c === 'v') {
+      while (i < tokens.length && /^-?\d/.test(tokens[i])) {
+        const y = +tokens[i++];
+        if (c === 'v') cy += y; else cy = y;
+        cur.push(cx, cy);
+      }
+    } else if (c === 'C' || c === 'c') {
+      while (i < tokens.length && /^-?\d/.test(tokens[i])) {
+        const x1 = +tokens[i++], y1 = +tokens[i++];
+        const x2 = +tokens[i++], y2 = +tokens[i++];
+        const x  = +tokens[i++], y  = +tokens[i++];
+        const ax1 = c === 'c' ? cx + x1 : x1;
+        const ay1 = c === 'c' ? cy + y1 : y1;
+        const ax2 = c === 'c' ? cx + x2 : x2;
+        const ay2 = c === 'c' ? cy + y2 : y2;
+        const ax  = c === 'c' ? cx + x  : x;
+        const ay  = c === 'c' ? cy + y  : y;
+        for (let s = 1; s <= segments; s++) {
+          const t = s / segments;
+          const u = 1 - t;
+          const px = u*u*u*cx + 3*u*u*t*ax1 + 3*u*t*t*ax2 + t*t*t*ax;
+          const py = u*u*u*cy + 3*u*u*t*ay1 + 3*u*t*t*ay2 + t*t*t*ay;
+          cur.push(px, py);
+        }
+        cx = ax; cy = ay;
+      }
+    } else if (c === 'Z' || c === 'z') {
+      cur.push(sx, sy);
+      pushCur();
+      cx = sx; cy = sy;
+    }
+  }
+  pushCur();
+  return polylines;
 }
