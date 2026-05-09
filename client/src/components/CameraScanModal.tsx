@@ -92,11 +92,10 @@ function clamp01(n: number) {
   return Math.min(1, Math.max(0, n));
 }
 
-// Trace the entire photo as one image (optionally white-masking text bboxes
-// first so they don't show up as scratchy traced shapes when the user picked
-// "Sketches + text" mode). Returns Stroke[] in world coordinates centred on
-// the current viewport — same target region as digital blocks, so layout
-// matches what the user saw in the photo.
+// Trace the entire photo as one image. Pre-binarizes client-side using
+// colour-distance background removal (much better than potrace's built-in
+// luminance Otsu — catches coloured ink and faint marks Otsu-on-luminance
+// would drop). Returns Stroke[] in world coords centred on the viewport.
 async function tracePhotoToStrokes(
   bitmap: ImageBitmap,
   photoAspect: number,
@@ -112,10 +111,19 @@ async function tracePhotoToStrokes(
   if (!ctx) return [];
   ctx.drawImage(bitmap, 0, 0);
 
-  // Sample ink colour from the original (un-masked) photo so masking can't
-  // bias the result toward white.
-  const color = inkColorFromPixels(ctx.getImageData(0, 0, W, H).data);
+  const orig = ctx.getImageData(0, 0, W, H);
+  const { inkColor, mask } = extractInkMask(orig.data);
 
+  // Paint the binary mask back onto the canvas: ink = black, bg = white.
+  const bin = ctx.createImageData(W, H);
+  const bd = bin.data;
+  for (let p = 0, i = 0; p < mask.length; p++, i += 4) {
+    const v = mask[p] ? 0 : 255;
+    bd[i] = v; bd[i + 1] = v; bd[i + 2] = v; bd[i + 3] = 255;
+  }
+  ctx.putImageData(bin, 0, 0);
+
+  // White out text bboxes after binarization (only used by 'mix' mode).
   if (maskBboxes && maskBboxes.length) {
     ctx.fillStyle = 'white';
     for (const b of maskBboxes) {
@@ -134,7 +142,8 @@ async function tracePhotoToStrokes(
   const regionH = regionW / photoAspect;
   const left = centre.x - regionW / 2;
   const top = centre.y - regionH / 2;
-  const STROKE_W = 2.4;
+  const STROKE_W = 1.4;
+  const colorHex = rgbToHex(inkColor.r, inkColor.g, inkColor.b);
 
   const strokes: Stroke[] = [];
   for (const t of traces) {
@@ -146,33 +155,85 @@ async function tracePhotoToStrokes(
         const wy = top + (poly[i + 1] / H) * regionH;
         points.push(wx, wy, 0.6);
       }
-      strokes.push({ color, width: STROKE_W, tool: 'pen', points });
+      strokes.push({ color: colorHex, width: STROKE_W, tool: 'pen', points });
     }
   }
   return strokes;
 }
 
-// Pick the average colour of the darkest 25% of pixels — that's almost always
-// the ink, regardless of paper / sticky background.
-function inkColorFromPixels(data: Uint8ClampedArray): string {
-  const lums: number[] = [];
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i], g = data[i + 1], b = data[i + 2];
-    lums.push(0.299 * r + 0.587 * g + 0.114 * b);
+// Detect the dominant background colour, measure each pixel's RGB-space
+// distance from it, and Otsu-threshold the distance histogram to split
+// ink from background. Works for coloured ink (red/green/blue/highlighter)
+// where luminance-only thresholding fails — coloured pen has small
+// luminance change but large colour-distance from beige paper.
+function extractInkMask(data: Uint8ClampedArray): {
+  inkColor: { r: number; g: number; b: number };
+  mask: Uint8Array;
+} {
+  const N = data.length / 4;
+
+  // Background: average of the brightest 30% of pixels.
+  const lums = new Float32Array(N);
+  for (let p = 0, i = 0; p < N; p++, i += 4) {
+    lums[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
   }
-  if (!lums.length) return '#1a1510';
-  const sorted = [...lums].sort((a, b) => a - b);
-  const cutoff = sorted[Math.floor(sorted.length * 0.25)];
-  let sumR = 0, sumG = 0, sumB = 0, n = 0;
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    if (lums[p] > cutoff) continue;
-    sumR += data[i]; sumG += data[i + 1]; sumB += data[i + 2]; n++;
+  const sorted = Array.from(lums).sort((a, b) => b - a);
+  const bgCutoff = sorted[Math.min(sorted.length - 1, Math.floor(N * 0.3))];
+  let bR = 0, bG = 0, bB = 0, bN = 0;
+  for (let p = 0, i = 0; p < N; p++, i += 4) {
+    if (lums[p] < bgCutoff) continue;
+    bR += data[i]; bG += data[i + 1]; bB += data[i + 2]; bN++;
   }
-  if (n < 4) return '#1a1510';
-  const r = Math.round(sumR / n);
-  const g = Math.round(sumG / n);
-  const b = Math.round(sumB / n);
-  return rgbToHex(r, g, b);
+  const bg = bN
+    ? { r: bR / bN, g: bG / bN, b: bB / bN }
+    : { r: 240, g: 235, b: 220 };
+
+  // Distance from bg in RGB space, scaled into 0..255 bins for Otsu.
+  const dists = new Uint8ClampedArray(N);
+  for (let p = 0, i = 0; p < N; p++, i += 4) {
+    const dr = data[i] - bg.r;
+    const dg = data[i + 1] - bg.g;
+    const db = data[i + 2] - bg.b;
+    const d = Math.sqrt(dr * dr + dg * dg + db * db) / 1.732;
+    dists[p] = d > 255 ? 255 : d | 0;
+  }
+
+  const threshold = Math.max(15, otsu(dists));
+  const mask = new Uint8Array(N);
+  let inR = 0, inG = 0, inB = 0, inN = 0;
+  for (let p = 0, i = 0; p < N; p++, i += 4) {
+    if (dists[p] >= threshold) {
+      mask[p] = 1;
+      inR += data[i]; inG += data[i + 1]; inB += data[i + 2]; inN++;
+    }
+  }
+  const inkColor = inN >= 4
+    ? { r: Math.round(inR / inN), g: Math.round(inG / inN), b: Math.round(inB / inN) }
+    : { r: 26, g: 21, b: 16 };
+  return { inkColor, mask };
+}
+
+// Standard Otsu's method on an 8-bit histogram. Returns the bin index that
+// maximises between-class variance.
+function otsu(values: Uint8ClampedArray): number {
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < values.length; i++) hist[values[i]]++;
+  const total = values.length;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, maxVar = 0, threshold = 0;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const v = wB * wF * (mB - mF) * (mB - mF);
+    if (v > maxVar) { maxVar = v; threshold = t; }
+  }
+  return threshold;
 }
 
 function rgbToHex(r: number, g: number, b: number) {
