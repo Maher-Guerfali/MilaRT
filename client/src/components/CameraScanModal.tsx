@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { api } from '../api';
 import type { BaseItem, Stroke } from '../types';
 import { CameraIcon, ImageIcon, CloseIcon } from './icons';
+import HERSHEY_FUTURAL from '../lib/hersheyFutural.json';
 
 interface Props {
   /** World-space centre of the current viewport — items land here. */
@@ -101,18 +102,19 @@ async function tracePhotoToStrokes(
   photoAspect: number,
   centre: { x: number; y: number },
   maskBboxes?: Array<{ x: number; y: number; w: number; h: number }>,
-): Promise<Stroke[]> {
+): Promise<{ strokes: Stroke[]; inkColor: string }> {
   const W = bitmap.width;
   const H = bitmap.height;
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return [];
+  if (!ctx) return { strokes: [], inkColor: '#1a1510' };
   ctx.drawImage(bitmap, 0, 0);
 
   const orig = ctx.getImageData(0, 0, W, H);
   const { inkColor, mask } = extractInkMask(orig.data);
+  const colorHex = rgbToHex(inkColor.r, inkColor.g, inkColor.b);
 
   // Paint the binary mask back onto the canvas: ink = black, bg = white.
   const bin = ctx.createImageData(W, H);
@@ -143,7 +145,6 @@ async function tracePhotoToStrokes(
   const left = centre.x - regionW / 2;
   const top = centre.y - regionH / 2;
   const STROKE_W = 1.4;
-  const colorHex = rgbToHex(inkColor.r, inkColor.g, inkColor.b);
 
   const strokes: Stroke[] = [];
   for (const t of traces) {
@@ -158,7 +159,101 @@ async function tracePhotoToStrokes(
       strokes.push({ color: colorHex, width: STROKE_W, tool: 'pen', points });
     }
   }
-  return strokes;
+  return { strokes, inkColor: colorHex };
+}
+
+// Render OCR'd text from each block as Hershey single-stroke polylines and
+// map them into world coords inside that block's bbox. Hershey is a 1960s
+// pen-plotter font where each glyph is one or more polylines (no fills, no
+// outlines), so the result reads as clean handwriting-style single lines —
+// exactly what's missing from outline-traced text.
+function textBlocksToHersheyStrokes(
+  blocks: ScanBlock[],
+  photoAspect: number,
+  centre: { x: number; y: number },
+  color: string,
+): Stroke[] {
+  const regionW = TARGET_REGION_WIDTH;
+  const regionH = regionW / photoAspect;
+  const left = centre.x - regionW / 2;
+  const top = centre.y - regionH / 2;
+  const STROKE_W = 1.4;
+  // Hershey simplex glyphs span roughly y∈[0,22] above baseline + descender;
+  // 32 leaves a hair of line-spacing.
+  const LINE_HEIGHT = 32;
+
+  const out: Stroke[] = [];
+  for (const block of blocks) {
+    const text = (block.text ?? '').trim();
+    if (!text) continue;
+
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+
+    const wbX = left + clamp01(block.bbox.x) * regionW;
+    const wbY = top + clamp01(block.bbox.y) * regionH;
+    const wbW = clamp01(block.bbox.w) * regionW;
+    const wbH = clamp01(block.bbox.h) * regionH;
+
+    const rendered = lines.map(renderHersheyLine);
+    const maxLineW = Math.max(0, ...rendered.map((r) => r.width));
+    if (maxLineW <= 0) continue;
+    const totalH = LINE_HEIGHT * rendered.length;
+    const scale = Math.min(wbW / maxLineW, wbH / totalH);
+    if (!Number.isFinite(scale) || scale <= 0) continue;
+
+    for (let li = 0; li < rendered.length; li++) {
+      const yShift = li * LINE_HEIGHT;
+      for (const poly of rendered[li].polylines) {
+        if (poly.length < 4) continue;
+        const points: number[] = [];
+        for (let i = 0; i < poly.length; i += 2) {
+          points.push(wbX + poly[i] * scale, wbY + (poly[i + 1] + yShift) * scale, 0.6);
+        }
+        out.push({ color, width: STROKE_W, tool: 'pen', points });
+      }
+    }
+  }
+  return out;
+}
+
+// Walk one line of text through the Hershey "futural" font, accumulating
+// pen-down polylines and the cursor advance.
+function renderHersheyLine(text: string): { polylines: number[][]; width: number } {
+  const polylines: number[][] = [];
+  let cursorX = 0;
+
+  for (let ci = 0; ci < text.length; ci++) {
+    const code = text.charCodeAt(ci);
+    // Printable ASCII glyphs in this font live at index = code - 33 (so '!').
+    // Space and any out-of-range char just advance the cursor.
+    if (code === 32 || code < 33 || code > 126) {
+      cursorX += 9;
+      continue;
+    }
+    const glyph = HERSHEY_FUTURAL.chars[code - 33];
+    if (!glyph) { cursorX += 9; continue; }
+
+    if (glyph.d) {
+      let cur: number[] = [];
+      for (const tok of glyph.d.split(/\s+/)) {
+        let body = tok;
+        if (tok[0] === 'M') {
+          if (cur.length >= 4) polylines.push(cur);
+          cur = [];
+          body = tok.slice(1);
+        } else if (tok[0] === 'L') {
+          body = tok.slice(1);
+        }
+        const m = body.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
+        if (!m) continue;
+        cur.push(cursorX + parseFloat(m[1]), parseFloat(m[2]));
+      }
+      if (cur.length >= 4) polylines.push(cur);
+    }
+    cursorX += glyph.o ?? 9;
+  }
+  return { polylines, width: cursorX };
 }
 
 // Detect the dominant background colour, measure each pixel's RGB-space
@@ -319,17 +414,20 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
       const bitmap = await fetch(compressed!).then((r) => r.blob()).then(createImageBitmap);
 
       if (effectiveMode === 'mix') {
-        // Mask text bboxes white so they don't get traced; add them back as
-        // editable typed items on top.
+        // Drawings: trace the photo with text bboxes white-masked so text
+        // outlines don't appear. Text: render OCR'd content as Hershey
+        // single-stroke polylines inside each block's bbox so it reads as
+        // clean handwriting instead of hollow letter outlines.
         const maskBboxes = chosen.map((b) => b.bbox);
-        const strokes = await tracePhotoToStrokes(bitmap, imgAspect, centre, maskBboxes);
-        const items = blocksToItems(chosen, imgAspect, centre);
-        if (strokes.length) onCommitStrokes!(strokes);
-        if (items.length) onCommit(items);
+        const { strokes: drawingStrokes, inkColor } =
+          await tracePhotoToStrokes(bitmap, imgAspect, centre, maskBboxes);
+        const textStrokes = textBlocksToHersheyStrokes(chosen, imgAspect, centre, inkColor);
+        const all = [...drawingStrokes, ...textStrokes];
+        if (all.length) onCommitStrokes!(all);
       } else {
         // 'trace' — whole photo as strokes, including text. Block selection
         // is irrelevant here.
-        const strokes = await tracePhotoToStrokes(bitmap, imgAspect, centre);
+        const { strokes } = await tracePhotoToStrokes(bitmap, imgAspect, centre);
         if (strokes.length) onCommitStrokes!(strokes);
       }
       onClose();
@@ -494,7 +592,7 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
                   {mode === 'digital'
                     ? 'Imports as typed sticky notes and text — fully editable.'
                     : mode === 'mix'
-                    ? 'Drawings come in as editable pencil strokes; recognised text comes in as typed notes.'
+                    ? 'Drawings come in as traced pencil strokes; recognised text is re-drawn in a clean single-line handwriting font so it stays readable.'
                     : 'Imports the entire photo as editable pencil strokes (use the eraser to fix mistakes).'}
                 </p>
               </div>
@@ -545,7 +643,7 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
                 {mode === 'trace'
                   ? 'Trace photo'
                   : mode === 'mix'
-                  ? `Add ${accepted.size} + sketches`
+                  ? `Draw ${accepted.size} text + sketches`
                   : `Add ${accepted.size} to canvas`}
               </button>
             </div>
