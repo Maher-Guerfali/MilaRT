@@ -13,7 +13,7 @@ interface Props {
   onClose: () => void;
 }
 
-type ImportMode = 'digital' | 'handwriting';
+type ImportMode = 'digital' | 'mix' | 'trace';
 
 type ScanBlock = {
   kind: 'sticky' | 'text';
@@ -92,32 +92,64 @@ function clamp01(n: number) {
   return Math.min(1, Math.max(0, n));
 }
 
-// Crop one block from the photo into its own canvas, sample the dominant ink
-// colour from the dark pixels (so red pen stays red), and return a PNG data
-// URL ready for the trace endpoint.
-function cropBlock(
-  source: ImageBitmap,
-  bbox: ScanBlock['bbox'],
-): { dataUrl: string; color: string; w: number; h: number } | null {
-  const W = source.width, H = source.height;
-  const sx = Math.max(0, Math.floor(clamp01(bbox.x) * W));
-  const sy = Math.max(0, Math.floor(clamp01(bbox.y) * H));
-  const sw = Math.max(2, Math.floor(clamp01(bbox.w) * W));
-  const sh = Math.max(2, Math.floor(clamp01(bbox.h) * H));
-  const cw = Math.min(sw, W - sx);
-  const ch = Math.min(sh, H - sy);
-  if (cw < 4 || ch < 4) return null;
-
+// Trace the entire photo as one image (optionally white-masking text bboxes
+// first so they don't show up as scratchy traced shapes when the user picked
+// "Sketches + text" mode). Returns Stroke[] in world coordinates centred on
+// the current viewport — same target region as digital blocks, so layout
+// matches what the user saw in the photo.
+async function tracePhotoToStrokes(
+  bitmap: ImageBitmap,
+  photoAspect: number,
+  centre: { x: number; y: number },
+  maskBboxes?: Array<{ x: number; y: number; w: number; h: number }>,
+): Promise<Stroke[]> {
+  const W = bitmap.width;
+  const H = bitmap.height;
   const canvas = document.createElement('canvas');
-  canvas.width = cw;
-  canvas.height = ch;
+  canvas.width = W;
+  canvas.height = H;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.drawImage(source, sx, sy, cw, ch, 0, 0, cw, ch);
+  if (!ctx) return [];
+  ctx.drawImage(bitmap, 0, 0);
 
-  const data = ctx.getImageData(0, 0, cw, ch).data;
-  const color = inkColorFromPixels(data);
-  return { dataUrl: canvas.toDataURL('image/png'), color, w: cw, h: ch };
+  // Sample ink colour from the original (un-masked) photo so masking can't
+  // bias the result toward white.
+  const color = inkColorFromPixels(ctx.getImageData(0, 0, W, H).data);
+
+  if (maskBboxes && maskBboxes.length) {
+    ctx.fillStyle = 'white';
+    for (const b of maskBboxes) {
+      const x = Math.max(0, clamp01(b.x) * W - 4);
+      const y = Math.max(0, clamp01(b.y) * H - 4);
+      const w = Math.min(W - x, clamp01(b.w) * W + 8);
+      const h = Math.min(H - y, clamp01(b.h) * H + 8);
+      ctx.fillRect(x, y, w, h);
+    }
+  }
+
+  const dataUrl = canvas.toDataURL('image/png');
+  const { traces } = await api.aiWhiteboardTrace([{ dataUrl }]);
+
+  const regionW = TARGET_REGION_WIDTH;
+  const regionH = regionW / photoAspect;
+  const left = centre.x - regionW / 2;
+  const top = centre.y - regionH / 2;
+  const STROKE_W = 2.4;
+
+  const strokes: Stroke[] = [];
+  for (const t of traces) {
+    for (const poly of t.polylines) {
+      if (poly.length < 4) continue;
+      const points: number[] = [];
+      for (let i = 0; i < poly.length; i += 2) {
+        const wx = left + (poly[i] / W) * regionW;
+        const wy = top + (poly[i + 1] / H) * regionH;
+        points.push(wx, wy, 0.6);
+      }
+      strokes.push({ color, width: STROKE_W, tool: 'pen', points });
+    }
+  }
+  return strokes;
 }
 
 // Pick the average colour of the darkest 25% of pixels — that's almost always
@@ -146,50 +178,6 @@ function inkColorFromPixels(data: Uint8ClampedArray): string {
 function rgbToHex(r: number, g: number, b: number) {
   const h = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0');
   return `#${h(r)}${h(g)}${h(b)}`;
-}
-
-// Map polylines from a single block's crop coords (px in cw × ch) into
-// world-space Stroke objects placed at the same world position the digital
-// items would have used.
-function tracesToStrokes(
-  traces: Array<{ index: number; polylines: number[][] }>,
-  blocks: ScanBlock[],
-  blockMeta: Array<{ color: string; cropW: number; cropH: number } | null>,
-  photoAspect: number,
-  centre: { x: number; y: number },
-): Stroke[] {
-  const regionW = TARGET_REGION_WIDTH;
-  const regionH = regionW / photoAspect;
-  const left = centre.x - regionW / 2;
-  const top = centre.y - regionH / 2;
-  const out: Stroke[] = [];
-  const STROKE_W = 2.4;
-
-  for (const t of traces) {
-    const block = blocks[t.index];
-    const meta = blockMeta[t.index];
-    if (!block || !meta) continue;
-    const bx = clamp01(block.bbox.x);
-    const by = clamp01(block.bbox.y);
-    const bw = clamp01(block.bbox.w);
-    const bh = clamp01(block.bbox.h);
-
-    for (const poly of t.polylines) {
-      if (poly.length < 4) continue;
-      const points: number[] = [];
-      for (let i = 0; i < poly.length; i += 2) {
-        const px = poly[i] / meta.cropW;
-        const py = poly[i + 1] / meta.cropH;
-        const nx = bx + px * bw;
-        const ny = by + py * bh;
-        const wx = left + nx * regionW;
-        const wy = top + ny * regionH;
-        points.push(wx, wy, 0.6);
-      }
-      out.push({ color: meta.color, width: STROKE_W, tool: 'pen', points });
-    }
-  }
-  return out;
 }
 
 type Stage = 'pick' | 'preview' | 'scanning' | 'review' | 'tracing' | 'error';
@@ -250,51 +238,39 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
     const acceptedIndices = blocks
       .map((_, i) => i)
       .filter((i) => accepted.has(i));
-    if (!acceptedIndices.length) { onClose(); return; }
     const chosen = acceptedIndices.map((i) => blocks[i]);
     const centre = getCenter();
 
-    if (mode === 'digital' || !onCommitStrokes || !compressed) {
+    // Trace modes need the photo + the strokes channel, otherwise fall back
+    // to digital so nothing is silently dropped.
+    const canTrace = !!onCommitStrokes && !!compressed;
+    const effectiveMode: ImportMode = canTrace ? mode : 'digital';
+
+    if (effectiveMode === 'digital') {
       const items = blocksToItems(chosen, imgAspect, centre);
       if (items.length) onCommit(items);
       onClose();
       return;
     }
 
-    // Handwriting mode: crop each accepted block, send to /trace, and convert
-    // the returned polylines to strokes. Any block that produces zero strokes
-    // silently falls back to a digital text/sticky item so nothing is lost.
     setStage('tracing');
     try {
-      const bitmap = await fetch(compressed).then((r) => r.blob()).then(createImageBitmap);
-      const metas: Array<{ color: string; cropW: number; cropH: number } | null> = [];
-      const regions: { dataUrl: string }[] = [];
-      const regionToAcceptedIdx: number[] = [];
-      for (let k = 0; k < chosen.length; k++) {
-        const cropped = cropBlock(bitmap, chosen[k].bbox);
-        if (!cropped) { metas.push(null); continue; }
-        metas.push({ color: cropped.color, cropW: cropped.w, cropH: cropped.h });
-        regions.push({ dataUrl: cropped.dataUrl });
-        regionToAcceptedIdx.push(k);
+      const bitmap = await fetch(compressed!).then((r) => r.blob()).then(createImageBitmap);
+
+      if (effectiveMode === 'mix') {
+        // Mask text bboxes white so they don't get traced; add them back as
+        // editable typed items on top.
+        const maskBboxes = chosen.map((b) => b.bbox);
+        const strokes = await tracePhotoToStrokes(bitmap, imgAspect, centre, maskBboxes);
+        const items = blocksToItems(chosen, imgAspect, centre);
+        if (strokes.length) onCommitStrokes!(strokes);
+        if (items.length) onCommit(items);
+      } else {
+        // 'trace' — whole photo as strokes, including text. Block selection
+        // is irrelevant here.
+        const strokes = await tracePhotoToStrokes(bitmap, imgAspect, centre);
+        if (strokes.length) onCommitStrokes!(strokes);
       }
-
-      const { traces } = await api.aiWhiteboardTrace(regions);
-      // Re-map trace.index (region index) back to chosen-block index.
-      const remapped = traces.map((t) => ({
-        index: regionToAcceptedIdx[t.index] ?? -1,
-        polylines: t.polylines,
-      })).filter((t) => t.index >= 0);
-
-      const strokes = tracesToStrokes(remapped, chosen, metas, imgAspect, centre);
-
-      // Blocks the trace produced nothing for → fall back to digital text
-      // so the user doesn't silently lose them.
-      const tracedSet = new Set(remapped.map((t) => t.index));
-      const fallbackBlocks = chosen.filter((_, i) => !tracedSet.has(i));
-      const fallbackItems = blocksToItems(fallbackBlocks, imgAspect, centre);
-
-      if (strokes.length) onCommitStrokes(strokes);
-      if (fallbackItems.length) onCommit(fallbackItems);
       onClose();
     } catch (e) {
       setErrorMsg(`Trace failed: ${(e as Error).message}`);
@@ -427,7 +403,7 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
             )}
             {onCommitStrokes && (
               <div className="px-5 pt-3">
-                <div className="flex p-0.5 rounded-xl border border-ink/12 bg-ink/[0.03] text-[11.5px] font-semibold">
+                <div className="flex p-0.5 rounded-xl border border-ink/12 bg-ink/[0.03] text-[11px] font-semibold">
                   <button
                     onClick={() => setMode('digital')}
                     className={`flex-1 h-7 rounded-lg transition-colors ${
@@ -437,18 +413,28 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
                     Digital text
                   </button>
                   <button
-                    onClick={() => setMode('handwriting')}
+                    onClick={() => setMode('mix')}
                     className={`flex-1 h-7 rounded-lg transition-colors ${
-                      mode === 'handwriting' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
+                      mode === 'mix' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
                     }`}
                   >
-                    Original handwriting
+                    Sketches + text
+                  </button>
+                  <button
+                    onClick={() => setMode('trace')}
+                    className={`flex-1 h-7 rounded-lg transition-colors ${
+                      mode === 'trace' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
+                    }`}
+                  >
+                    Trace everything
                   </button>
                 </div>
                 <p className="text-[11px] text-ink/45 mt-1.5 leading-snug">
                   {mode === 'digital'
                     ? 'Imports as typed sticky notes and text — fully editable.'
-                    : 'Imports as editable pencil strokes that mirror the original handwriting. Use the eraser to remove parts.'}
+                    : mode === 'mix'
+                    ? 'Drawings come in as editable pencil strokes; recognised text comes in as typed notes.'
+                    : 'Imports the entire photo as editable pencil strokes (use the eraser to fix mistakes).'}
                 </p>
               </div>
             )}
@@ -491,11 +477,15 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
               </button>
               <button
                 onClick={commit}
-                disabled={accepted.size === 0}
+                disabled={mode !== 'trace' && accepted.size === 0}
                 className="flex-1 h-9 rounded-xl text-[13px] font-semibold text-white transition-colors disabled:opacity-40"
                 style={{ background: '#D97435' }}
               >
-                Add {accepted.size} to canvas
+                {mode === 'trace'
+                  ? 'Trace photo'
+                  : mode === 'mix'
+                  ? `Add ${accepted.size} + sketches`
+                  : `Add ${accepted.size} to canvas`}
               </button>
             </div>
           </>
