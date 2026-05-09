@@ -219,39 +219,63 @@ function textBlocksToHersheyStrokes(
 
 // Walk one line of text through the Hershey "futural" font, accumulating
 // pen-down polylines and the cursor advance.
+//
+// Hershey's `o` field is *not* the visual width — it's a half-width metric
+// that leaves glyphs overlapping if you naively use it as advance. Instead
+// we measure each glyph's real bounding box from its strokes and use that
+// + a constant inter-char padding, which is what the user actually reads as
+// comfortable letter spacing.
 function renderHersheyLine(text: string): { polylines: number[][]; width: number } {
   const polylines: number[][] = [];
   let cursorX = 0;
+  const CHAR_PAD = 3;     // gap between adjacent glyphs
+  const SPACE_W = 12;     // width of an ASCII space
 
   for (let ci = 0; ci < text.length; ci++) {
     const code = text.charCodeAt(ci);
-    // Printable ASCII glyphs in this font live at index = code - 33 (so '!').
-    // Space and any out-of-range char just advance the cursor.
     if (code === 32 || code < 33 || code > 126) {
-      cursorX += 9;
+      cursorX += SPACE_W;
       continue;
     }
     const glyph = HERSHEY_FUTURAL.chars[code - 33];
-    if (!glyph) { cursorX += 9; continue; }
-
-    if (glyph.d) {
-      let cur: number[] = [];
-      for (const tok of glyph.d.split(/\s+/)) {
-        let body = tok;
-        if (tok[0] === 'M') {
-          if (cur.length >= 4) polylines.push(cur);
-          cur = [];
-          body = tok.slice(1);
-        } else if (tok[0] === 'L') {
-          body = tok.slice(1);
-        }
-        const m = body.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
-        if (!m) continue;
-        cur.push(cursorX + parseFloat(m[1]), parseFloat(m[2]));
-      }
-      if (cur.length >= 4) polylines.push(cur);
+    if (!glyph || !glyph.d) {
+      cursorX += SPACE_W;
+      continue;
     }
-    cursorX += glyph.o ?? 9;
+
+    const tokens = glyph.d.split(/\s+/);
+    let minX = Infinity, maxX = -Infinity;
+    for (const tok of tokens) {
+      const body = (tok[0] === 'M' || tok[0] === 'L') ? tok.slice(1) : tok;
+      const m = body.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
+      if (!m) continue;
+      const x = parseFloat(m[1]);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+    }
+    if (!Number.isFinite(minX)) {
+      cursorX += SPACE_W;
+      continue;
+    }
+    const offsetX = cursorX - minX;
+
+    let cur: number[] = [];
+    for (const tok of tokens) {
+      let body = tok;
+      if (tok[0] === 'M') {
+        if (cur.length >= 4) polylines.push(cur);
+        cur = [];
+        body = tok.slice(1);
+      } else if (tok[0] === 'L') {
+        body = tok.slice(1);
+      }
+      const m = body.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
+      if (!m) continue;
+      cur.push(parseFloat(m[1]) + offsetX, parseFloat(m[2]));
+    }
+    if (cur.length >= 4) polylines.push(cur);
+
+    cursorX += Math.max(maxX - minX, glyph.o ?? 0, 4) + CHAR_PAD;
   }
   return { polylines, width: cursorX };
 }
