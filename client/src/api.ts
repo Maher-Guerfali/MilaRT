@@ -120,11 +120,13 @@ export const api = {
       body: JSON.stringify({ items, prompt }),
     }),
 
-  /** Image-to-image edit: send a PNG data URL + prompt, get back an edited image URL. */
-  aiImageEdit: (imageDataUrl: string, prompt: string) =>
+  /** Image-to-image edit: send a PNG data URL + prompt, get back an edited image URL.
+   *  Optional `referenceDataUrls` lets the user attach extra photos that
+   *  gpt-image-1 uses as visual references. */
+  aiImageEdit: (imageDataUrl: string, prompt: string, referenceDataUrls?: string[]) =>
     req<{ url: string }>('/api/ai/image-edit', {
       method: 'POST',
-      body: JSON.stringify({ imageDataUrl, prompt }),
+      body: JSON.stringify({ imageDataUrl, prompt, referenceDataUrls }),
     }),
 
   /** Send the photo to gpt-image-1 to redraw it cleanly (white background,

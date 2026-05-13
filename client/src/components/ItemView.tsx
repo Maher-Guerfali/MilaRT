@@ -843,12 +843,14 @@ function ImageBox({
 
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiRefs, setAiRefs] = useState<string[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!selected) { setAiOpen(false); setAiPrompt(''); }
+    if (!selected) { setAiOpen(false); setAiPrompt(''); setAiRefs([]); }
   }, [selected]);
 
   // Extend mode is tied to the AI panel:
@@ -899,8 +901,12 @@ function ImageBox({
       //    square PNG. White areas around the image are sent to the model so
       //    it can outpaint into them.
       const dataUrl = await captureItemWithStrokes(item, strokes, view);
-      // 2. Send to server → OpenAI
-      const result = await api.aiImageEdit(dataUrl, aiPrompt.trim());
+      // 2. Send to server → OpenAI, with any attached reference photos.
+      const result = await api.aiImageEdit(
+        dataUrl,
+        aiPrompt.trim(),
+        aiRefs.length > 0 ? aiRefs : undefined,
+      );
       // 3. Push new URL into version list, drop extend mode (the new image
       //    fills the whole bounds), and clear the prompt UI.
       const newVersions = [...versions, result.url];
@@ -909,11 +915,24 @@ function ImageBox({
       onUpdate({ data: nextData });
       setAiOpen(false);
       setAiPrompt('');
+      setAiRefs([]);
     } catch (e) {
       alert(`AI edit failed: ${(e as Error).message}`);
     } finally {
       setAiLoading(false);
     }
+  }
+
+  async function addRefFiles(files: FileList | File[] | null) {
+    if (!files || !files.length) return;
+    const imgs = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const dataUrls = await Promise.all(imgs.map((f) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.readAsDataURL(f);
+    })));
+    setAiRefs((prev) => [...prev, ...dataUrls].slice(0, 8));
   }
 
   function switchVersion(idx: number) {
@@ -1039,26 +1058,63 @@ function ImageBox({
         <div
           data-no-item-drag
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute bottom-10 left-0 right-0 mx-2 rounded-xl p-2 flex gap-1.5 z-30"
+          className="absolute bottom-10 left-0 right-0 mx-2 rounded-xl p-2 flex flex-col gap-1.5 z-30"
           style={{ background: 'rgba(253,250,245,0.97)', boxShadow: '0 4px 18px rgba(26,21,16,0.15)', border: '1px solid rgba(26,21,16,0.08)' }}
         >
-          <input
-            autoFocus
-            value={aiPrompt}
-            onChange={(e) => setAiPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') runAIEdit(); if (e.key === 'Escape') setAiOpen(false); }}
-            placeholder="Describe the edit…"
-            className="flex-1 min-w-0 text-[11px] bg-transparent outline-none text-ink placeholder:text-ink/35"
-            style={{ fontFamily: 'inherit' }}
-          />
-          <button
-            onClick={runAIEdit}
-            disabled={!aiPrompt.trim()}
-            className="h-6 px-2.5 rounded-lg text-[10px] font-bold text-white transition-all disabled:opacity-40 shrink-0"
-            style={{ background: '#D97435' }}
-          >
-            Go
-          </button>
+          {aiRefs.length > 0 && (
+            <div className="flex gap-1 flex-wrap">
+              {aiRefs.map((u, i) => (
+                <div key={i} className="relative w-9 h-9 rounded-md overflow-hidden ring-1 ring-ink/10">
+                  <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
+                  <button
+                    onClick={() => setAiRefs((prev) => prev.filter((_, j) => j !== i))}
+                    title="Remove reference"
+                    className="absolute top-0 right-0 w-3.5 h-3.5 rounded-bl-md bg-ink/85 text-white text-[9px] leading-none flex items-center justify-center"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-1.5 items-center">
+            <button
+              onClick={() => refInputRef.current?.click()}
+              title="Attach reference image"
+              className="w-6 h-6 rounded-md flex items-center justify-center text-ink/55 hover:text-ink hover:bg-ink/[0.06] transition-colors shrink-0"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+            <input
+              ref={refInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = e.target.files;
+                e.target.value = '';
+                void addRefFiles(files);
+              }}
+            />
+            <input
+              autoFocus
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') runAIEdit(); if (e.key === 'Escape') setAiOpen(false); }}
+              placeholder={aiRefs.length > 0 ? 'Describe how to use the reference…' : 'Describe the edit…'}
+              className="flex-1 min-w-0 text-[11px] bg-transparent outline-none text-ink placeholder:text-ink/35"
+              style={{ fontFamily: 'inherit' }}
+            />
+            <button
+              onClick={runAIEdit}
+              disabled={!aiPrompt.trim()}
+              className="h-6 px-2.5 rounded-lg text-[10px] font-bold text-white transition-all disabled:opacity-40 shrink-0"
+              style={{ background: '#D97435' }}
+            >
+              Go
+            </button>
+          </div>
         </div>
       )}
 

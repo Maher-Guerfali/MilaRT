@@ -619,34 +619,57 @@ Return via the return_whiteboard_scan tool.`;
 
   // ── AI image editing (image-to-image) ─────────────────────────────
   // POST /api/ai/image-edit
-  // Body: { imageDataUrl: string (base64 PNG), prompt: string }
+  // Body: { imageDataUrl: string (base64 PNG), prompt: string,
+  //         referenceDataUrls?: string[] (additional reference images) }
   // Returns: { url: string } — a newly uploaded image URL
   r.post('/ai/image-edit', async (req, res) => {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
     }
-    const { imageDataUrl, prompt } = req.body || {};
+    const { imageDataUrl, prompt, referenceDataUrls } = req.body || {};
     if (!prompt || typeof prompt !== 'string') return res.status(400).json({ error: 'missing prompt' });
     if (!imageDataUrl || typeof imageDataUrl !== 'string') return res.status(400).json({ error: 'missing imageDataUrl' });
 
-    // Strip data URL prefix and decode to buffer
-    const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/s);
-    if (!match) return res.status(400).json({ error: 'invalid imageDataUrl' });
-    const [, , b64] = match;
-    const imageBuffer = Buffer.from(b64, 'base64');
+    // Decode the primary image plus any reference images. Each must be a
+    // data URL with mime + base64 payload.
+    function decodeDataUrl(u) {
+      const m = u.match(/^data:([^;]+);base64,(.+)$/s);
+      if (!m) return null;
+      return { mime: m[1], buffer: Buffer.from(m[2], 'base64') };
+    }
+    const primary = decodeDataUrl(imageDataUrl);
+    if (!primary) return res.status(400).json({ error: 'invalid imageDataUrl' });
+
+    const refs = [];
+    if (Array.isArray(referenceDataUrls)) {
+      // Cap at 8 refs (gpt-image-1 takes up to 16 image inputs total — leave
+      // headroom and keep request size manageable).
+      for (const u of referenceDataUrls.slice(0, 8)) {
+        if (typeof u !== 'string') continue;
+        const dec = decodeDataUrl(u);
+        if (dec) refs.push(dec);
+      }
+    }
 
     try {
-      // Build multipart form for OpenAI /v1/images/edits
+      // Build multipart form for OpenAI /v1/images/edits. gpt-image-1
+      // accepts multiple `image[]` fields and uses the extras as references.
       const { FormData, Blob } = await import('node:buffer').then(() => globalThis);
       const formData = new FormData();
       formData.append('model', 'gpt-image-1');
       formData.append('prompt', prompt.trim().slice(0, 1000));
       formData.append('n', '1');
       formData.append('size', '1024x1024');
-      // image field must be a File/Blob with a .png filename
-      const blob = new Blob([imageBuffer], { type: 'image/png' });
-      formData.append('image', blob, 'image.png');
+
+      const field = refs.length > 0 ? 'image[]' : 'image';
+      const primaryBlob = new Blob([primary.buffer], { type: primary.mime || 'image/png' });
+      formData.append(field, primaryBlob, 'image.png');
+      refs.forEach((r, i) => {
+        const ext = (r.mime.split('/')[1] || 'png').split(';')[0];
+        const blob = new Blob([r.buffer], { type: r.mime });
+        formData.append('image[]', blob, `ref-${i}.${ext}`);
+      });
 
       const aiRes = await fetch('https://api.openai.com/v1/images/edits', {
         method: 'POST',
