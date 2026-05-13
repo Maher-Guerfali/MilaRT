@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
 import { api } from '../api';
 import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon } from './icons';
@@ -73,6 +74,23 @@ export default function ItemView({
   // the parent. Resets whenever the item is deselected.
   const [editing, setEditing] = useState(false);
   useEffect(() => { if (!selected) setEditing(false); }, [selected]);
+
+  // Right-click context menu (currently only used for image items).
+  // Coordinates are in viewport space — the menu is portalled at fixed pos.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('blur', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('blur', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [ctxMenu]);
 
   function canDragFrom(target: EventTarget | null) {
     return !(target as HTMLElement | null)?.closest(
@@ -313,12 +331,22 @@ export default function ItemView({
           : undefined,
       }}
       onPointerDown={(e) => {
+        if (e.button !== 0) return;
         if (!canDragFrom(e.target)) return;
         startDrag(e, 'move');
       }}
       onPointerMove={onDrag}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onContextMenu={(e) => {
+        if (item.type !== 'image') return;
+        const url = (item.data as Partial<ImageData>).url;
+        if (!url) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!selected) onSelect(false);
+        setCtxMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
       {item.type === 'sticky' && (
         <Sticky item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
@@ -441,7 +469,248 @@ export default function ItemView({
           />
         </>
       )}
+
+      {ctxMenu && item.type === 'image' && (
+        <ImageContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          url={(item.data as Partial<ImageData>).url ?? ''}
+          canSendToStorage={!!onSendToStorage}
+          onClose={() => setCtxMenu(null)}
+          onSendToStorage={onSendToStorage ? () => onSendToStorage(item.id) : undefined}
+          onDelete={onDelete}
+        />
+      )}
     </div>
+  );
+}
+
+async function downloadImage(url: string) {
+  // Pick a reasonable filename from the URL path, falling back to a default.
+  let filename = 'image';
+  try {
+    const u = new URL(url, window.location.origin);
+    const last = u.pathname.split('/').filter(Boolean).pop();
+    if (last && /\./.test(last)) filename = last;
+  } catch { /* keep default */ }
+
+  // For data: URLs and same-origin / CORS-permissive sources, fetch into a
+  // blob so the browser saves the bytes directly. If that fails (CORS, opaque
+  // response, etc.) fall back to a plain anchor — the user may still get a
+  // download depending on the response's Content-Disposition.
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    if (!/\.[a-z0-9]+$/i.test(filename)) {
+      const ext = (blob.type.split('/')[1] || 'png').split(';')[0];
+      filename = `${filename}.${ext}`;
+    }
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+  } catch {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function copyImageToClipboard(url: string): Promise<boolean> {
+  try {
+    if (!('ClipboardItem' in window) || !navigator.clipboard?.write) return false;
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) return false;
+    let blob = await res.blob();
+    // The Clipboard API only accepts image/png on most browsers — convert
+    // anything else (jpeg, webp, gif…) through a canvas.
+    if (blob.type !== 'image/png') {
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+      blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png');
+      });
+    }
+    // eslint-disable-next-line no-undef
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ImageContextMenu({
+  x, y, url, canSendToStorage, onClose, onSendToStorage, onDelete,
+}: {
+  x: number; y: number; url: string;
+  canSendToStorage: boolean;
+  onClose: () => void;
+  onSendToStorage?: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+
+  // Nudge the menu inside the viewport after first render so it never gets
+  // clipped at the right/bottom edge.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let nx = x, ny = y;
+    if (nx + rect.width + pad > window.innerWidth) nx = window.innerWidth - rect.width - pad;
+    if (ny + rect.height + pad > window.innerHeight) ny = window.innerHeight - rect.height - pad;
+    if (nx !== x || ny !== y) setPos({ x: Math.max(pad, nx), y: Math.max(pad, ny) });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function run(action: () => void | Promise<void>) {
+    return (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onClose();
+      void action();
+    };
+  }
+
+  const items: Array<{ label: string; icon: ReactNode; action: () => void | Promise<void>; danger?: boolean; disabled?: boolean }> = [
+    {
+      label: 'Download image',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+      ),
+      action: () => downloadImage(url),
+    },
+    {
+      label: 'Copy image',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="14" height="14" rx="2" />
+          <path d="M7 21h12a2 2 0 0 0 2-2V9" />
+        </svg>
+      ),
+      action: async () => {
+        const ok = await copyImageToClipboard(url);
+        if (!ok) {
+          const fallback = await copyToClipboard(url);
+          if (!fallback) alert('Could not copy image.');
+        }
+      },
+    },
+    {
+      label: 'Copy image URL',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+          <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+        </svg>
+      ),
+      action: async () => {
+        const ok = await copyToClipboard(url);
+        if (!ok) alert('Could not copy URL.');
+      },
+      disabled: url.startsWith('data:'),
+    },
+    {
+      label: 'Open in new tab',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" />
+          <line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+      ),
+      action: () => { window.open(url, '_blank', 'noopener,noreferrer'); },
+    },
+    ...(canSendToStorage && onSendToStorage ? [{
+      label: 'Send to storage',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 8 12 3 3 8v8l9 5 9-5z" />
+          <path d="M3 8l9 5 9-5" />
+          <path d="M12 13v8" />
+        </svg>
+      ),
+      action: onSendToStorage,
+    }] : []),
+    {
+      label: 'Delete',
+      icon: <TrashIcon size={14} />,
+      action: onDelete,
+      danger: true,
+    },
+  ];
+
+  // Portalled to body so the zoomed/transformed canvas ancestor doesn't
+  // capture our `position: fixed`.
+  return createPortal(
+    <div
+      ref={ref}
+      data-no-item-drag
+      onPointerDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+      className="fixed z-[100000] min-w-[180px] py-1 rounded-xl text-[12px] text-ink"
+      style={{
+        left: pos.x,
+        top: pos.y,
+        background: 'rgba(253,250,245,0.98)',
+        border: '1px solid rgba(26,21,16,0.10)',
+        boxShadow: '0 10px 28px rgba(26,21,16,0.18), 0 2px 6px rgba(26,21,16,0.10)',
+        backdropFilter: 'blur(6px)',
+      }}
+    >
+      {items.map((it, i) => (
+        <button
+          key={i}
+          disabled={it.disabled}
+          onClick={run(it.action)}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          style={it.danger ? { color: '#C0392B' } : undefined}
+        >
+          <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
+          <span className="flex-1">{it.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body
   );
 }
 
