@@ -385,6 +385,7 @@ export default function ItemView({
           className="absolute flex items-center gap-1"
           style={fixedControl('100%', '0%')}
         >
+          <TextFormatButtons item={item} onUpdate={onUpdate} />
           {item.type === 'image' && onMoveLayer && (
             <>
               <button
@@ -802,6 +803,8 @@ function Sticky({
   const baseFS = d.fontSize ?? 12.5;
   const fontSize = baseFS * liveTextScale;
   const hwClass = d.font === 'handwriting' ? ' font-handwriting' : '';
+  // Stickies default to regular weight; B-toggle bumps to 700.
+  const fontWeight = d.bold ? 700 : 400;
 
   if (editing) {
     return (
@@ -819,6 +822,7 @@ function Sticky({
           borderRadius: 16,
           boxShadow,
           fontSize,
+          fontWeight,
         }}
       />
     );
@@ -832,6 +836,7 @@ function Sticky({
         borderRadius: 16,
         boxShadow,
         fontSize,
+        fontWeight,
       }}
     >
       {d.text || <span className="text-ink/45 italic">Click to select, click again to type…</span>}
@@ -1537,13 +1542,18 @@ function TextOrLink({
     );
   }
 
+  // Text items legacy-default to bold (700) — preserve that when bold isn't
+  // explicitly set. Handwriting font ignores the bold flag visually: its
+  // weight already reads as "ink-on-paper" and 700 would crush the strokes.
+  const isBold = d.bold !== false;
+  const fontWeight = isHandwriting ? 400 : isBold ? 700 : 400;
+
   return (
     <div
       className={`w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5${isHandwriting ? ' font-handwriting' : ''}`}
       style={{
         fontSize,
-        // Handwriting font already has plenty of weight; bold would crush it.
-        fontWeight: isHandwriting ? 400 : 700,
+        fontWeight,
         lineHeight: isHandwriting ? 1.2 : 1.45,
         letterSpacing: isHandwriting ? 'normal' : '-0.2px',
         boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
@@ -1697,5 +1707,60 @@ function DocumentBox({
         }}
       >Open</button>
     </div>
+  );
+}
+
+// ── TextFormatButtons ────────────────────────────────────────────────
+// A-, A+, B controls in the action cluster. Visible for stickies and for
+// text-mode link items (links with no URL). Clicking patches data.fontSize /
+// data.bold and the renderer picks it up. Font-size step is ±2 with a soft
+// 8..96 clamp so users can't shrink past readability or blow up the layout.
+function TextFormatButtons({
+  item, onUpdate,
+}: { item: BaseItem; onUpdate: (p: Partial<BaseItem>) => void }) {
+  if (item.type !== 'sticky' && item.type !== 'link') return null;
+  const d = item.data as Partial<StickyData & LinkData>;
+  // Only show on link items that are actually text (no URL).
+  if (item.type === 'link' && /^https?:\/\/\S+$/i.test((d.title || d.url || '').toString().trim())) {
+    return null;
+  }
+  const defaultFS = item.type === 'sticky' ? 12.5 : 16;
+  const fs = d.fontSize ?? defaultFS;
+  // Bold semantics: sticky defaults to off, text-link defaults to on. The
+  // explicit value `bold` overrides either way.
+  const isBold = item.type === 'sticky' ? d.bold === true : d.bold !== false;
+
+  function setFontSize(next: number) {
+    const clamped = Math.max(8, Math.min(96, next));
+    onUpdate({ data: { ...d, fontSize: clamped } as Record<string, unknown> });
+  }
+  function toggleBold() {
+    onUpdate({ data: { ...d, bold: !isBold } as Record<string, unknown> });
+  }
+
+  const btnBase = 'w-[26px] h-[26px] rounded-full shadow ring-1 ring-ink/10 flex items-center justify-center text-[11px] font-bold';
+  return (
+    <>
+      <button
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs - 2); }}
+        title="Smaller text"
+        className={`${btnBase} bg-white text-ink`}
+      >A−</button>
+      <button
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs + 2); }}
+        title="Bigger text"
+        className={`${btnBase} bg-white text-ink`}
+      >A+</button>
+      <button
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); toggleBold(); }}
+        title={isBold ? 'Remove bold' : 'Bold'}
+        // Inverted colours when active so users can see the toggle state.
+        className={`${btnBase} ${isBold ? 'bg-ink text-paper' : 'bg-white text-ink'}`}
+        style={{ fontFamily: 'serif' }}
+      >B</button>
+    </>
   );
 }

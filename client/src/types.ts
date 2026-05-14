@@ -11,9 +11,9 @@ export interface BaseItem {
   data: Record<string, unknown>;
 }
 
-export interface StickyData { text: string; color: string; fontSize?: number; font?: 'handwriting'; }
+export interface StickyData { text: string; color: string; fontSize?: number; font?: 'handwriting'; bold?: boolean; }
 export interface ImageData { url: string; }
-export interface LinkData { url: string; title: string; fontSize?: number; font?: 'handwriting'; }
+export interface LinkData { url: string; title: string; fontSize?: number; font?: 'handwriting'; bold?: boolean; }
 export interface BoardRefData {
   boardId: string;
   name: string;
