@@ -41,6 +41,9 @@ interface Props {
 
 export interface CanvasHandle {
   getCenter: () => { x: number; y: number };
+  /** World-space size of the visible viewport — used to size pasted/scanned
+   *  content to roughly fit on screen instead of a fixed world-px constant. */
+  getViewportWorld: () => { centerX: number; centerY: number; worldW: number; worldH: number };
 }
 
 const MIN_SCALE = 0.1;
@@ -96,7 +99,17 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     const rect = wrapRef.current!.getBoundingClientRect();
     return toWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
-  useImperativeHandle(ref, () => ({ getCenter: centerOfView }));
+  function viewportWorld() {
+    const rect = wrapRef.current!.getBoundingClientRect();
+    const c = centerOfView();
+    return {
+      centerX: c.x,
+      centerY: c.y,
+      worldW: rect.width / view.scale,
+      worldH: rect.height / view.scale,
+    };
+  }
+  useImperativeHandle(ref, () => ({ getCenter: centerOfView, getViewportWorld: viewportWorld }));
 
   // Track wrap size so the mini-map can draw the viewport rect accurately.
   useLayoutEffect(() => {

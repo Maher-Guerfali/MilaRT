@@ -410,7 +410,11 @@ export default function BoardPage() {
       />
       {cameraScanOpen && (
         <CameraScanModal
-          getCenter={() => canvasRef.current?.getCenter() ?? { x: 0, y: 0 }}
+          getViewport={() =>
+            canvasRef.current?.getViewportWorld() ?? {
+              centerX: 0, centerY: 0, worldW: 1400, worldH: 1400,
+            }
+          }
           onCommit={(scanned) => {
             setItems((xs) => {
               const base = xs.length;

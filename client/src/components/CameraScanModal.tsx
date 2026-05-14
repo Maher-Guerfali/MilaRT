@@ -6,7 +6,9 @@ import { CameraIcon, ImageIcon, CloseIcon } from './icons';
 
 interface Props {
   /** World-space centre of the current viewport — items land here. */
-  getCenter: () => { x: number; y: number };
+  /** Returns the current viewport in world units so imported content can be
+   *  sized to roughly fit on screen rather than using a fixed world-px box. */
+  getViewport: () => { centerX: number; centerY: number; worldW: number; worldH: number };
   onCommit: (items: BaseItem[]) => void;
   /** Optional: receive traced handwriting strokes (handwriting import mode). */
   onCommitStrokes?: (strokes: Stroke[]) => void;
@@ -23,7 +25,13 @@ type ScanBlock = {
 };
 
 const STICKY_FALLBACK = '#FFF3C4';
-const TARGET_REGION_WIDTH = 1400;     // world px the photo's full width maps to
+// Fraction of the visible viewport the imported photo should occupy. Leaves a
+// margin so the user has headroom to zoom further out without re-fitting.
+const VIEWPORT_FIT = 0.85;
+// Floor / ceiling on the world-px width we'll pick — keeps very tiny or huge
+// viewports from producing unusable results.
+const REGION_W_MIN = 600;
+const REGION_W_MAX = 3000;
 const MIN_W = 120;
 const MIN_H = 56;
 const MAX_UPLOAD_PX = 1568;           // resize before sending to keep tokens down
@@ -45,15 +53,27 @@ async function fileToCompressedDataUrl(file: Blob): Promise<{ dataUrl: string; w
   return { dataUrl, w, h };
 }
 
+// Pick a region width so a photo of `photoAspect` fits within VIEWPORT_FIT of
+// the visible viewport — bounded to the REGION_W_MIN..MAX range.
+function fitRegionWidth(
+  photoAspect: number,
+  viewport: { worldW: number; worldH: number },
+): number {
+  const byWidth = viewport.worldW * VIEWPORT_FIT;
+  const byHeight = viewport.worldH * VIEWPORT_FIT * photoAspect;
+  const raw = Math.min(byWidth, byHeight);
+  return Math.max(REGION_W_MIN, Math.min(REGION_W_MAX, raw));
+}
+
 function blocksToItems(
   blocks: ScanBlock[],
   photoAspect: number,
-  centre: { x: number; y: number },
+  viewport: { centerX: number; centerY: number; worldW: number; worldH: number },
 ): BaseItem[] {
-  const regionW = TARGET_REGION_WIDTH;
+  const regionW = fitRegionWidth(photoAspect, viewport);
   const regionH = regionW / photoAspect;
-  const left = centre.x - regionW / 2;
-  const top = centre.y - regionH / 2;
+  const left = viewport.centerX - regionW / 2;
+  const top = viewport.centerY - regionH / 2;
 
   return blocks
     .filter((b) => b.text && b.text.trim().length > 0 && b.bbox)
@@ -99,7 +119,7 @@ function clamp01(n: number) {
 async function tracePhotoToStrokes(
   bitmap: ImageBitmap,
   photoAspect: number,
-  centre: { x: number; y: number },
+  viewport: { centerX: number; centerY: number; worldW: number; worldH: number },
   maskBboxes?: Array<{ x: number; y: number; w: number; h: number }>,
 ): Promise<{ strokes: Stroke[]; inkColor: string }> {
   const W = bitmap.width;
@@ -139,11 +159,13 @@ async function tracePhotoToStrokes(
   const dataUrl = canvas.toDataURL('image/png');
   const { traces } = await api.aiWhiteboardTrace([{ dataUrl }]);
 
-  const regionW = TARGET_REGION_WIDTH;
+  const regionW = fitRegionWidth(photoAspect, viewport);
   const regionH = regionW / photoAspect;
-  const left = centre.x - regionW / 2;
-  const top = centre.y - regionH / 2;
-  const STROKE_W = 1.4;
+  const left = viewport.centerX - regionW / 2;
+  const top = viewport.centerY - regionH / 2;
+  // Scale stroke width so it stays visually consistent across zoom levels —
+  // 1.4 looked right at the previous fixed 1400-px region.
+  const STROKE_W = 1.4 * (regionW / 1400);
 
   const strokes: Stroke[] = [];
   for (const t of traces) {
@@ -243,7 +265,7 @@ function rgbToHex(r: number, g: number, b: number) {
 
 type Stage = 'pick' | 'preview' | 'scanning' | 'review' | 'cleaning' | 'tracing' | 'error';
 
-export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, onClose }: Props) {
+export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes, onClose }: Props) {
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
@@ -316,7 +338,7 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
       // Use the cleaned image's own aspect for placement; gpt-image-1 may
       // have switched to one of its supported sizes which can differ slightly.
       const cleanedAspect = bitmap.width / bitmap.height;
-      const { strokes } = await tracePhotoToStrokes(bitmap, cleanedAspect, getCenter());
+      const { strokes } = await tracePhotoToStrokes(bitmap, cleanedAspect, getViewport());
       if (strokes.length) onCommitStrokes(strokes);
       onClose();
     } catch (e) {
@@ -328,7 +350,7 @@ export default function CameraScanModal({ getCenter, onCommit, onCommitStrokes, 
   // Digital mode: commit the OCR'd blocks the user accepted.
   function commitDigital() {
     const chosen = blocks.filter((_, i) => accepted.has(i));
-    const items = blocksToItems(chosen, imgAspect, getCenter());
+    const items = blocksToItems(chosen, imgAspect, getViewport());
     if (items.length) onCommit(items);
     onClose();
   }
