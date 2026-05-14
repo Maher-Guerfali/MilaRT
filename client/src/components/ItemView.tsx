@@ -846,12 +846,13 @@ function ImageBox({
   const [aiRefs, setAiRefs] = useState<string[]>([]);
   const [aiRefLoading, setAiRefLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiVariants, setAiVariants] = useState<string[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!selected) { setAiOpen(false); setAiPrompt(''); setAiRefs([]); }
+    if (!selected) { setAiOpen(false); setAiPrompt(''); setAiRefs([]); setAiVariants([]); }
   }, [selected]);
 
   // Extend mode is tied to the AI panel:
@@ -894,7 +895,18 @@ function ImageBox({
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [aiLoading]);
 
-  async function runAIEdit() {
+  function commitAIResult(url: string) {
+    const newVersions = [...versions, url];
+    const nextData = { ...d, url, versions: newVersions };
+    delete (nextData as Record<string, unknown>).imgFrame;
+    onUpdate({ data: nextData });
+    setAiOpen(false);
+    setAiPrompt('');
+    setAiRefs([]);
+    setAiVariants([]);
+  }
+
+  async function runAIEdit(variantCount = 1) {
     if (!aiPrompt.trim() || aiLoading) return;
     setAiLoading(true);
     try {
@@ -902,21 +914,22 @@ function ImageBox({
       //    square PNG. White areas around the image are sent to the model so
       //    it can outpaint into them.
       const dataUrl = await captureItemWithStrokes(item, strokes, view);
-      // 2. Send to server → OpenAI, with any attached reference photos.
+      // 2. Send to server → OpenAI, with any attached reference photos and
+      //    requested variant count.
       const result = await api.aiImageEdit(
         dataUrl,
         aiPrompt.trim(),
         aiRefs.length > 0 ? aiRefs : undefined,
+        variantCount,
       );
-      // 3. Push new URL into version list, drop extend mode (the new image
-      //    fills the whole bounds), and clear the prompt UI.
-      const newVersions = [...versions, result.url];
-      const nextData = { ...d, url: result.url, versions: newVersions };
-      delete (nextData as Record<string, unknown>).imgFrame;
-      onUpdate({ data: nextData });
-      setAiOpen(false);
-      setAiPrompt('');
-      setAiRefs([]);
+      // 3a. Single result: commit straight away. 3b. Multi: open picker
+      //     and hide the prompt panel so the variants get the whole image.
+      if (variantCount <= 1 || result.urls.length <= 1) {
+        commitAIResult(result.urls[0] ?? result.url);
+      } else {
+        setAiVariants(result.urls);
+        setAiOpen(false);
+      }
     } catch (e) {
       alert(`AI edit failed: ${(e as Error).message}`);
     } finally {
@@ -1150,13 +1163,63 @@ function ImageBox({
               style={{ fontFamily: 'inherit' }}
             />
             <button
-              onClick={runAIEdit}
+              onClick={() => runAIEdit(1)}
               disabled={!aiPrompt.trim()}
+              title="Generate one image"
               className="h-6 px-2.5 rounded-lg text-[10px] font-bold text-white transition-all disabled:opacity-40 shrink-0"
               style={{ background: '#D97435' }}
             >
               Go
             </button>
+            <button
+              onClick={() => runAIEdit(4)}
+              disabled={!aiPrompt.trim()}
+              title="Generate 4 variations to pick from"
+              className="h-6 px-2 rounded-lg text-[10px] font-bold transition-all disabled:opacity-40 shrink-0 flex items-center gap-0.5"
+              style={{
+                background: 'rgba(217,116,53,0.12)',
+                color: '#D97435',
+                border: '1px solid rgba(217,116,53,0.45)',
+              }}
+            >
+              <span className="text-[8px] opacity-70">×</span>4
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Variant picker — shown after a ×N generation. Click a thumb to
+          commit it; the rest are discarded. */}
+      {aiVariants.length > 0 && selected && !aiLoading && (
+        <div
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute inset-0 rounded-2xl z-40 flex flex-col items-stretch p-2 gap-1.5"
+          style={{
+            background: 'rgba(26,21,16,0.78)',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.07em] text-white/90 px-1">
+            <span>Pick a variant</span>
+            <button
+              onClick={() => setAiVariants([])}
+              title="Discard all and start over"
+              className="text-white/65 hover:text-white text-[14px] leading-none px-1"
+            >×</button>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 flex-1 min-h-0">
+            {aiVariants.map((u, i) => (
+              <button
+                key={i}
+                onClick={() => commitAIResult(u)}
+                title={`Pick variant ${i + 1}`}
+                className="relative rounded-lg overflow-hidden ring-1 ring-white/20 hover:ring-2 hover:ring-[#D97435] transition-all"
+              >
+                <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
+                <span className="absolute bottom-1 right-1 px-1.5 py-[1px] rounded bg-ink/70 text-white text-[9px] font-bold pointer-events-none">{i + 1}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}

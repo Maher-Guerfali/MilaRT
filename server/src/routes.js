@@ -620,16 +620,19 @@ Return via the return_whiteboard_scan tool.`;
   // ── AI image editing (image-to-image) ─────────────────────────────
   // POST /api/ai/image-edit
   // Body: { imageDataUrl: string (base64 PNG), prompt: string,
-  //         referenceDataUrls?: string[] (additional reference images) }
-  // Returns: { url: string } — a newly uploaded image URL
+  //         referenceDataUrls?: string[], n?: number (1-4) }
+  // Returns: { url: string, urls: string[] } — primary + all variants
   r.post('/ai/image-edit', async (req, res) => {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
     }
-    const { imageDataUrl, prompt, referenceDataUrls } = req.body || {};
+    const { imageDataUrl, prompt, referenceDataUrls, n } = req.body || {};
     if (!prompt || typeof prompt !== 'string') return res.status(400).json({ error: 'missing prompt' });
     if (!imageDataUrl || typeof imageDataUrl !== 'string') return res.status(400).json({ error: 'missing imageDataUrl' });
+
+    // Clamp variant count to 1..4 — keeps latency + cost predictable.
+    const variantCount = Math.max(1, Math.min(4, Number.isFinite(n) ? Math.floor(n) : 1));
 
     // Decode the primary image plus any reference images. Each must be a
     // data URL with mime + base64 payload.
@@ -659,7 +662,7 @@ Return via the return_whiteboard_scan tool.`;
       const formData = new FormData();
       formData.append('model', 'gpt-image-1');
       formData.append('prompt', prompt.trim().slice(0, 1000));
-      formData.append('n', '1');
+      formData.append('n', String(variantCount));
       formData.append('size', '1024x1024');
 
       const field = refs.length > 0 ? 'image[]' : 'image';
@@ -684,27 +687,30 @@ Return via the return_whiteboard_scan tool.`;
       }
 
       const aiData = await aiRes.json();
-      // gpt-image-1 returns b64_json by default
-      const b64Result = aiData?.data?.[0]?.b64_json;
-      const urlResult = aiData?.data?.[0]?.url;
-
-      let resultBuffer, resultMime = 'image/png';
-      if (b64Result) {
-        resultBuffer = Buffer.from(b64Result, 'base64');
-      } else if (urlResult) {
-        // Fetch the URL and re-upload
-        const imgRes = await fetch(urlResult);
-        resultBuffer = Buffer.from(await imgRes.arrayBuffer());
-        resultMime = imgRes.headers.get('content-type') || 'image/png';
-      } else {
+      const entries = Array.isArray(aiData?.data) ? aiData.data : [];
+      if (entries.length === 0) {
         return res.status(502).json({ error: 'No image in AI response' });
       }
 
-      // Upload to our storage (Supabase or local disk)
-      const filename = `ai-edit-${Date.now()}.png`;
-      const { url } = await storageUpload({ buffer: resultBuffer, filename, mimetype: resultMime, localDir: uploadDir });
-      console.log(`[ai/image-edit] done -> ${url}`);
-      res.json({ url });
+      // Decode each variant (b64_json preferred, url fallback) and upload to
+      // our storage. Variants are uploaded in parallel.
+      const urls = await Promise.all(entries.map(async (entry, i) => {
+        let buffer, mime = 'image/png';
+        if (entry?.b64_json) {
+          buffer = Buffer.from(entry.b64_json, 'base64');
+        } else if (entry?.url) {
+          const imgRes = await fetch(entry.url);
+          buffer = Buffer.from(await imgRes.arrayBuffer());
+          mime = imgRes.headers.get('content-type') || 'image/png';
+        } else {
+          throw new Error(`variant ${i} missing image data`);
+        }
+        const filename = `ai-edit-${Date.now()}-${i}.png`;
+        const { url } = await storageUpload({ buffer, filename, mimetype: mime, localDir: uploadDir });
+        return url;
+      }));
+      console.log(`[ai/image-edit] done -> ${urls.length} variant(s)`);
+      res.json({ url: urls[0], urls });
     } catch (err) {
       console.error('[ai/image-edit] error:', err);
       res.status(500).json({ error: err.message });
