@@ -844,6 +844,7 @@ function ImageBox({
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiRefs, setAiRefs] = useState<string[]>([]);
+  const [aiRefLoading, setAiRefLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -926,13 +927,19 @@ function ImageBox({
   async function addRefFiles(files: FileList | File[] | null) {
     if (!files || !files.length) return;
     const imgs = Array.from(files).filter((f) => f.type.startsWith('image/'));
-    const dataUrls = await Promise.all(imgs.map((f) => new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(new Error('read failed'));
-      reader.readAsDataURL(f);
-    })));
-    setAiRefs((prev) => [...prev, ...dataUrls].slice(0, 8));
+    if (!imgs.length) return;
+    setAiRefLoading(true);
+    try {
+      const dataUrls = await Promise.all(imgs.map((f) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('read failed'));
+        reader.readAsDataURL(f);
+      })));
+      setAiRefs((prev) => [...prev, ...dataUrls].slice(0, 8));
+    } finally {
+      setAiRefLoading(false);
+    }
   }
 
   function switchVersion(idx: number) {
@@ -1058,32 +1065,68 @@ function ImageBox({
         <div
           data-no-item-drag
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute bottom-10 left-0 right-0 mx-2 rounded-xl p-2 flex flex-col gap-1.5 z-30"
-          style={{ background: 'rgba(253,250,245,0.97)', boxShadow: '0 4px 18px rgba(26,21,16,0.15)', border: '1px solid rgba(26,21,16,0.08)' }}
+          className="absolute bottom-10 left-0 right-0 mx-2 rounded-xl p-2 flex flex-col gap-2 z-30"
+          style={{
+            background: 'rgba(253,250,245,0.97)',
+            boxShadow: '0 4px 18px rgba(26,21,16,0.15)',
+            border: aiRefs.length > 0 ? '1.5px solid rgba(217,116,53,0.45)' : '1px solid rgba(26,21,16,0.08)',
+            minWidth: 220,
+          }}
         >
-          {aiRefs.length > 0 && (
-            <div className="flex gap-1 flex-wrap">
-              {aiRefs.map((u, i) => (
-                <div key={i} className="relative w-9 h-9 rounded-md overflow-hidden ring-1 ring-ink/10">
-                  <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
-                  <button
-                    onClick={() => setAiRefs((prev) => prev.filter((_, j) => j !== i))}
-                    title="Remove reference"
-                    className="absolute top-0 right-0 w-3.5 h-3.5 rounded-bl-md bg-ink/85 text-white text-[9px] leading-none flex items-center justify-center"
-                  >×</button>
-                </div>
-              ))}
+          {(aiRefs.length > 0 || aiRefLoading) && (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.07em] text-[#D97435]">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+                <span>
+                  {aiRefLoading ? 'Reading…' : `${aiRefs.length} reference${aiRefs.length === 1 ? '' : 's'} attached`}
+                </span>
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {aiRefs.map((u, i) => (
+                  <div
+                    key={i}
+                    className="relative rounded-md overflow-hidden ring-2 ring-[#D97435]/55 shadow-sm"
+                    style={{ width: 52, height: 52 }}
+                  >
+                    <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
+                    <button
+                      onClick={() => setAiRefs((prev) => prev.filter((_, j) => j !== i))}
+                      title="Remove reference"
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-ink text-white text-[10px] leading-none flex items-center justify-center shadow"
+                    >×</button>
+                  </div>
+                ))}
+                {aiRefLoading && (
+                  <div
+                    className="rounded-md ring-1 ring-ink/10 bg-ink/[0.04] flex items-center justify-center text-ink/45"
+                    style={{ width: 52, height: 52 }}
+                  >
+                    <span className="animate-pulse text-[10px]">…</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           <div className="flex gap-1.5 items-center">
             <button
               onClick={() => refInputRef.current?.click()}
               title="Attach reference image"
-              className="w-6 h-6 rounded-md flex items-center justify-center text-ink/55 hover:text-ink hover:bg-ink/[0.06] transition-colors shrink-0"
+              className="relative w-7 h-7 rounded-md flex items-center justify-center transition-colors shrink-0"
+              style={{
+                background: aiRefs.length > 0 ? '#D97435' : 'transparent',
+                color: aiRefs.length > 0 ? 'white' : 'rgba(26,21,16,0.55)',
+              }}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
+              {aiRefs.length > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-ink text-white text-[9px] font-bold leading-none flex items-center justify-center"
+                >{aiRefs.length}</span>
+              )}
             </button>
             <input
               ref={refInputRef}
