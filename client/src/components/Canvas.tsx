@@ -44,6 +44,9 @@ export interface CanvasHandle {
   /** World-space size of the visible viewport — used to size pasted/scanned
    *  content to roughly fit on screen instead of a fixed world-px constant. */
   getViewportWorld: () => { centerX: number; centerY: number; worldW: number; worldH: number };
+  /** Smoothly animate the camera so the given items fit (~70% default) the
+   *  viewport. Used by the F shortcut and the per-item focus button. */
+  focusOnIds: (ids: string[], opts?: { fit?: number; duration?: number }) => void;
 }
 
 const MIN_SCALE = 0.1;
@@ -82,6 +85,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
   const [lassoActive, setLassoActive] = useState(false);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
+  // Cancels any focus animation in flight so a new F-press doesn't fight a
+  // previous one mid-flight.
+  const focusAnimRef = useRef<number | null>(null);
 
   const inDrawMode  = drawOpen && drawTool === 'pencil';
   const inEraseMode = drawOpen && drawTool === 'eraser';
@@ -109,7 +115,65 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       worldH: rect.height / view.scale,
     };
   }
-  useImperativeHandle(ref, () => ({ getCenter: centerOfView, getViewportWorld: viewportWorld }));
+  // Smoothly animate view (x, y, scale) so the union bbox of the given item
+  // ids occupies ~70% of the visible viewport, centred. Used by the F-key
+  // shortcut and the per-item focus button. Cancels any animation already
+  // running so back-to-back presses don't fight each other.
+  function focusOnIds(ids: string[], opts?: { fit?: number; duration?: number }) {
+    const fit = opts?.fit ?? 0.7;
+    const duration = opts?.duration ?? 360;
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    const targets = items.filter((it) => ids.includes(it.id));
+    if (targets.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const it of targets) {
+      if (it.x < minX) minX = it.x;
+      if (it.y < minY) minY = it.y;
+      if (it.x + it.w > maxX) maxX = it.x + it.w;
+      if (it.y + it.h > maxY) maxY = it.y + it.h;
+    }
+    const bboxW = Math.max(1, maxX - minX);
+    const bboxH = Math.max(1, maxY - minY);
+    const cx = minX + bboxW / 2;
+    const cy = minY + bboxH / 2;
+    const rawScale = Math.min((rect.width * fit) / bboxW, (rect.height * fit) / bboxH);
+    const toScale = clampScale(rawScale);
+    const toX = rect.width / 2 - cx * toScale;
+    const toY = rect.height / 2 - cy * toScale;
+
+    if (focusAnimRef.current !== null) {
+      cancelAnimationFrame(focusAnimRef.current);
+      focusAnimRef.current = null;
+    }
+    // Use the React state at call time; mid-animation re-renders keep
+    // refreshing `focusOnIds`, but each invocation snapshots its own `from`.
+    const from = { ...view };
+    const t0 = performance.now();
+    function step(now: number) {
+      const k = Math.min(1, (now - t0) / duration);
+      // easeOutCubic — quick deceleration feels responsive without overshoot.
+      const e = 1 - Math.pow(1 - k, 3);
+      setView({
+        x: from.x + (toX - from.x) * e,
+        y: from.y + (toY - from.y) * e,
+        scale: from.scale + (toScale - from.scale) * e,
+      });
+      if (k < 1) {
+        focusAnimRef.current = requestAnimationFrame(step);
+      } else {
+        focusAnimRef.current = null;
+      }
+    }
+    focusAnimRef.current = requestAnimationFrame(step);
+  }
+
+  useImperativeHandle(ref, () => ({
+    getCenter: centerOfView,
+    getViewportWorld: viewportWorld,
+    focusOnIds,
+  }));
 
   // Track wrap size so the mini-map can draw the viewport rect accurately.
   useLayoutEffect(() => {
@@ -404,11 +468,19 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         setSelection(new Set());
       } else if (e.key === 'Escape') {
         setSelection(new Set());
+      } else if ((e.key === 'f' || e.key === 'F') && selection.size && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        // F = focus camera on the current selection. Skipped when modifier
+        // keys are down so Ctrl-F / Cmd-F (browser find) still work normally.
+        e.preventDefault();
+        focusOnIds(Array.from(selection));
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selection, onDeleteMany]);
+  // focusOnIds closes over `items` and `view`; including them keeps the
+  // handler in sync but doesn't matter much since we read fresh values inside.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, onDeleteMany, items]);
 
   function selectItem(id: string, additive: boolean) {
     setSelection((prev) => {
@@ -475,6 +547,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onSetMergeTarget={setMergeTargetId}
             onMerge={onMerge}
             onOpenDocument={onOpenDocument}
+            onFocus={() => focusOnIds([it.id])}
           />
         ))}
       </div>
