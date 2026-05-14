@@ -782,12 +782,13 @@ function Sticky({
     : '0 2px 10px rgba(26,21,16,0.09)';
   const baseFS = d.fontSize ?? 12.5;
   const fontSize = baseFS * liveTextScale;
+  const hwClass = d.font === 'handwriting' ? ' font-handwriting' : '';
 
   if (editing) {
     return (
       <textarea
         autoFocus
-        className="w-full h-full resize-none border-0 outline-none p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap"
+        className={`w-full h-full resize-none border-0 outline-none p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap${hwClass}`}
         placeholder="Type something…"
         value={d.text ?? ''}
         onChange={(e) => onUpdate({ data: { ...d, text: e.target.value } })}
@@ -806,7 +807,7 @@ function Sticky({
 
   return (
     <div
-      className="w-full h-full p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap overflow-hidden cursor-text"
+      className={`w-full h-full p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap overflow-hidden cursor-text${hwClass}`}
       style={{
         background: d.color || '#FFF3C4',
         borderRadius: 16,
@@ -1462,12 +1463,14 @@ function TextOrLink({
   const ytId = isUrl ? youTubeId(txt.trim()) : null;
   const baseFS = d.fontSize ?? 16;
   const fontSize = baseFS * liveTextScale;
+  // Handwriting font only makes sense for plain text — drop it for URLs.
+  const isHandwriting = d.font === 'handwriting' && !isUrl;
 
   if (editing) {
     return (
       <textarea
         autoFocus
-        className="w-full h-full resize-none p-1.5 leading-snug bg-paper rounded-lg outline outline-2 outline-amber"
+        className={`w-full h-full resize-none p-1.5 leading-snug bg-paper rounded-lg outline outline-2 outline-amber${isHandwriting ? ' font-handwriting' : ''}`}
         value={txt}
         placeholder="Type text or paste a link…"
         onChange={(e) => onUpdate({ data: { ...d, url: '', title: e.target.value } })}
@@ -1517,9 +1520,13 @@ function TextOrLink({
 
   return (
     <div
-      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
+      className={`w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5${isHandwriting ? ' font-handwriting' : ''}`}
       style={{
-        fontSize, fontWeight: 700, lineHeight: 1.45, letterSpacing: '-0.2px',
+        fontSize,
+        // Handwriting font already has plenty of weight; bold would crush it.
+        fontWeight: isHandwriting ? 400 : 700,
+        lineHeight: isHandwriting ? 1.2 : 1.45,
+        letterSpacing: isHandwriting ? 'normal' : '-0.2px',
         boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
       }}
     >

@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { api } from '../api';
 import type { BaseItem, Stroke } from '../types';
 import { CameraIcon, ImageIcon, CloseIcon } from './icons';
+import { traceSkeleton } from '../lib/skeletonTrace';
 
 interface Props {
   /** World-space centre of the current viewport — items land here. */
@@ -15,7 +16,11 @@ interface Props {
   onClose: () => void;
 }
 
-type ImportMode = 'digital' | 'sketch';
+// Two import strategies:
+//   'text' → OCR only. Text becomes handwriting-font items. Drawings ignored.
+//   'mix'  → OCR text → handwriting-font items + skeleton-trace whatever
+//            isn't text into single-line pen strokes.
+type ImportMode = 'text' | 'mix';
 
 type ScanBlock = {
   kind: 'sticky' | 'text';
@@ -69,11 +74,13 @@ function blocksToItems(
   blocks: ScanBlock[],
   photoAspect: number,
   viewport: { centerX: number; centerY: number; worldW: number; worldH: number },
+  options?: { handwriting?: boolean },
 ): BaseItem[] {
   const regionW = fitRegionWidth(photoAspect, viewport);
   const regionH = regionW / photoAspect;
   const left = viewport.centerX - regionW / 2;
   const top = viewport.centerY - regionH / 2;
+  const handwriting = options?.handwriting === true;
 
   return blocks
     .filter((b) => b.text && b.text.trim().length > 0 && b.bbox)
@@ -86,6 +93,14 @@ function blocksToItems(
       const y = top + by * regionH;
       const w = Math.max(MIN_W, bw * regionW);
       const h = Math.max(MIN_H, bh * regionH);
+      // Pick a font size that fills the bbox roughly the way the original
+      // handwriting did. Divide by line count so multi-line blocks don't
+      // pick a giant font that overflows vertically.
+      const text = b.text.trim();
+      const lineCount = (text.match(/\n/g)?.length ?? 0) + 1;
+      const fontSize = handwriting
+        ? Math.max(12, Math.min(48, (h / lineCount) / 1.35))
+        : undefined;
 
       if (b.kind === 'sticky') {
         return {
@@ -93,7 +108,11 @@ function blocksToItems(
           type: 'sticky',
           x, y, w, h,
           z: idx,
-          data: { text: b.text.trim(), color: b.color || STICKY_FALLBACK },
+          data: {
+            text,
+            color: b.color || STICKY_FALLBACK,
+            ...(handwriting ? { font: 'handwriting' as const, fontSize } : {}),
+          },
         };
       }
       // Free text → "link with no URL", matching the Sidebar Text button convention.
@@ -102,7 +121,11 @@ function blocksToItems(
         type: 'link',
         x, y, w, h,
         z: idx,
-        data: { url: '', title: b.text.trim() },
+        data: {
+          url: '',
+          title: text,
+          ...(handwriting ? { font: 'handwriting' as const, fontSize } : {}),
+        },
       };
     });
 }
@@ -112,10 +135,15 @@ function clamp01(n: number) {
   return Math.min(1, Math.max(0, n));
 }
 
-// Trace the entire photo as one image. Pre-binarizes client-side using
-// colour-distance background removal (much better than potrace's built-in
-// luminance Otsu — catches coloured ink and faint marks Otsu-on-luminance
-// would drop). Returns Stroke[] in world coords centred on the viewport.
+// Trace the photo to centerline pen strokes. We:
+//   1. Binarize using colour-distance background removal (handles coloured
+//      ink that pure luminance Otsu would miss).
+//   2. Zero out any text bboxes from the mask so the OCR'd letters don't get
+//      double-rendered as strokes too.
+//   3. Run client-side skeleton tracing (see lib/skeletonTrace) which returns
+//      single-line polylines + an ink-thickness estimate.
+//   4. Project polylines from mask px → world coords and emit Stroke[] sized
+//      so the pen width matches what was on the paper.
 async function tracePhotoToStrokes(
   bitmap: ImageBitmap,
   photoAspect: number,
@@ -135,50 +163,46 @@ async function tracePhotoToStrokes(
   const { inkColor, mask } = extractInkMask(orig.data);
   const colorHex = rgbToHex(inkColor.r, inkColor.g, inkColor.b);
 
-  // Paint the binary mask back onto the canvas: ink = black, bg = white.
-  const bin = ctx.createImageData(W, H);
-  const bd = bin.data;
-  for (let p = 0, i = 0; p < mask.length; p++, i += 4) {
-    const v = mask[p] ? 0 : 255;
-    bd[i] = v; bd[i + 1] = v; bd[i + 2] = v; bd[i + 3] = 255;
-  }
-  ctx.putImageData(bin, 0, 0);
-
-  // White out text bboxes after binarization (only used by 'mix' mode).
+  // Erase text bbox regions from the mask before skeletonizing — only the
+  // non-text drawings (boxes, arrows, freehand) become strokes.
   if (maskBboxes && maskBboxes.length) {
-    ctx.fillStyle = 'white';
     for (const b of maskBboxes) {
-      const x = Math.max(0, clamp01(b.x) * W - 4);
-      const y = Math.max(0, clamp01(b.y) * H - 4);
-      const w = Math.min(W - x, clamp01(b.w) * W + 8);
-      const h = Math.min(H - y, clamp01(b.h) * H + 8);
-      ctx.fillRect(x, y, w, h);
+      const padPx = Math.round(0.005 * Math.max(W, H));   // ~0.5% padding
+      const x0 = Math.max(0, Math.floor(clamp01(b.x) * W) - padPx);
+      const y0 = Math.max(0, Math.floor(clamp01(b.y) * H) - padPx);
+      const x1 = Math.min(W, Math.ceil((clamp01(b.x) + clamp01(b.w)) * W) + padPx);
+      const y1 = Math.min(H, Math.ceil((clamp01(b.y) + clamp01(b.h)) * H) + padPx);
+      for (let y = y0; y < y1; y++) {
+        const row = y * W;
+        for (let x = x0; x < x1; x++) mask[row + x] = 0;
+      }
     }
   }
 
-  const dataUrl = canvas.toDataURL('image/png');
-  const { traces } = await api.aiWhiteboardTrace([{ dataUrl }]);
+  const trace = traceSkeleton(mask, W, H);
+  if (trace.polylines.length === 0) {
+    return { strokes: [], inkColor: colorHex };
+  }
 
   const regionW = fitRegionWidth(photoAspect, viewport);
   const regionH = regionW / photoAspect;
   const left = viewport.centerX - regionW / 2;
   const top = viewport.centerY - regionH / 2;
-  // Scale stroke width so it stays visually consistent across zoom levels —
-  // 1.4 looked right at the previous fixed 1400-px region.
-  const STROKE_W = 1.4 * (regionW / 1400);
+  // Convert estimated ink thickness from (downscaled) mask px to world px.
+  // 0.55 is a visual fudge factor — skeleton-derived thickness slightly
+  // overshoots actual pen weight because of mask noise around stroke edges.
+  const maskToWorld = regionW / trace.width;
+  const strokeW = Math.max(0.6, trace.inkThickness * maskToWorld * 0.55);
 
   const strokes: Stroke[] = [];
-  for (const t of traces) {
-    for (const poly of t.polylines) {
-      if (poly.length < 4) continue;
-      const points: number[] = [];
-      for (let i = 0; i < poly.length; i += 2) {
-        const wx = left + (poly[i] / W) * regionW;
-        const wy = top + (poly[i + 1] / H) * regionH;
-        points.push(wx, wy, 0.6);
-      }
-      strokes.push({ color: colorHex, width: STROKE_W, tool: 'pen', points });
+  for (const poly of trace.polylines) {
+    const points: number[] = [];
+    for (let i = 0; i < poly.length; i += 2) {
+      const wx = left + (poly[i] / trace.width) * regionW;
+      const wy = top + (poly[i + 1] / trace.height) * regionH;
+      points.push(wx, wy, 0.6);
     }
+    strokes.push({ color: colorHex, width: strokeW, tool: 'pen', points });
   }
   return { strokes, inkColor: colorHex };
 }
@@ -263,7 +287,7 @@ function rgbToHex(r: number, g: number, b: number) {
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
-type Stage = 'pick' | 'preview' | 'scanning' | 'review' | 'cleaning' | 'tracing' | 'error';
+type Stage = 'pick' | 'preview' | 'scanning' | 'review' | 'tracing' | 'error';
 
 export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes, onClose }: Props) {
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -277,7 +301,7 @@ export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes
   const [explanation, setExplanation] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [accepted, setAccepted] = useState<Set<number>>(new Set());
-  const [mode, setMode] = useState<ImportMode>('digital');
+  const [mode, setMode] = useState<ImportMode>('mix');
 
   // Lock background scroll while the modal is open.
   useEffect(() => {
@@ -300,59 +324,62 @@ export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes
     }
   }
 
-  // From the preview stage, branch on the user's chosen import mode.
+  // From the preview stage, kick off OCR. Both 'text' and 'mix' modes need
+  // the OCR pass — the mode only changes what we do *after* the review step.
   async function proceed() {
     if (!compressed) return;
-
-    if (mode === 'digital') {
-      setStage('scanning');
-      try {
-        const res = await api.aiWhiteboardScan(compressed);
-        const found = res.blocks ?? [];
-        setBlocks(found);
-        setExplanation(res.explanation || '');
-        setAccepted(new Set(found.map((_, i) => i)));
-        setStage(found.length ? 'review' : 'error');
-        if (!found.length) setErrorMsg("Couldn't find any readable content in this photo.");
-      } catch (e) {
-        setErrorMsg(`Scan failed: ${(e as Error).message}`);
-        setStage('error');
-      }
-      return;
-    }
-
-    // Sketch mode: gpt-image-1 cleans the photo, then we trace the clean
-    // version. No bbox / OCR work — the entire image is going on canvas.
-    if (!onCommitStrokes) {
-      setErrorMsg('Sketch mode is not available here.');
-      setStage('error');
-      return;
-    }
-    setStage('cleaning');
+    setStage('scanning');
     try {
-      const cleaned = await api.aiWhiteboardClean(compressed, imgAspect);
-      setStage('tracing');
-      const bitmap = await fetch(cleaned.dataUrl)
-        .then((r) => r.blob())
-        .then(createImageBitmap);
-      // Use the cleaned image's own aspect for placement; gpt-image-1 may
-      // have switched to one of its supported sizes which can differ slightly.
-      const cleanedAspect = bitmap.width / bitmap.height;
-      const { strokes } = await tracePhotoToStrokes(bitmap, cleanedAspect, getViewport());
-      if (strokes.length) onCommitStrokes(strokes);
-      onClose();
+      const res = await api.aiWhiteboardScan(compressed);
+      const found = res.blocks ?? [];
+      setBlocks(found);
+      setExplanation(res.explanation || '');
+      setAccepted(new Set(found.map((_, i) => i)));
+      if (found.length === 0 && mode === 'text') {
+        setErrorMsg("Couldn't find any readable text in this photo.");
+        setStage('error');
+        return;
+      }
+      // Mix mode with no text is still fine — we'll just trace the whole image.
+      setStage(found.length || mode === 'text' ? 'review' : 'tracing');
+      if (mode === 'mix' && found.length === 0) {
+        await runTrace([]);
+      }
     } catch (e) {
-      setErrorMsg(`Sketch import failed: ${(e as Error).message}`);
+      setErrorMsg(`Scan failed: ${(e as Error).message}`);
       setStage('error');
     }
   }
 
-  // Digital mode: commit the OCR'd blocks the user accepted.
-  function commitDigital() {
+  // Commit the accepted OCR blocks as handwriting-font text items. In 'mix'
+  // mode we then run the skeleton trace, masking out the bboxes of the text
+  // we just committed so we don't double-render letters as pen strokes.
+  async function commitReview() {
     const chosen = blocks.filter((_, i) => accepted.has(i));
-    const items = blocksToItems(chosen, imgAspect, getViewport());
+    const items = blocksToItems(chosen, imgAspect, getViewport(), { handwriting: true });
     if (items.length) onCommit(items);
+
+    if (mode === 'mix' && onCommitStrokes) {
+      setStage('tracing');
+      await runTrace(chosen.map((b) => b.bbox));
+      return;
+    }
     onClose();
+  }
+
+  // Skeleton-trace the original photo, masking out the given text bboxes.
+  async function runTrace(maskBboxes: Array<{ x: number; y: number; w: number; h: number }>) {
+    if (!onCommitStrokes || !compressed) { onClose(); return; }
+    try {
+      const bitmap = await fetch(compressed).then((r) => r.blob()).then(createImageBitmap);
+      const aspect = bitmap.width / bitmap.height;
+      const { strokes } = await tracePhotoToStrokes(bitmap, aspect, getViewport(), maskBboxes);
+      if (strokes.length) onCommitStrokes(strokes);
+      onClose();
+    } catch (e) {
+      setErrorMsg(`Trace failed: ${(e as Error).message}`);
+      setStage('error');
+    }
   }
 
   function toggleBlock(i: number) {
@@ -445,26 +472,26 @@ export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes
               <div className="px-5 pb-2">
                 <div className="flex p-0.5 rounded-xl border border-ink/12 bg-ink/[0.03] text-[12px] font-semibold">
                   <button
-                    onClick={() => setMode('digital')}
+                    onClick={() => setMode('mix')}
                     className={`flex-1 h-8 rounded-lg transition-colors ${
-                      mode === 'digital' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
+                      mode === 'mix' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
                     }`}
                   >
-                    Digital text
+                    Mix (text + drawing)
                   </button>
                   <button
-                    onClick={() => setMode('sketch')}
+                    onClick={() => setMode('text')}
                     className={`flex-1 h-8 rounded-lg transition-colors ${
-                      mode === 'sketch' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
+                      mode === 'text' ? 'bg-white text-ink shadow-sm' : 'text-ink/55'
                     }`}
                   >
-                    Sketch
+                    Text only
                   </button>
                 </div>
                 <p className="text-[11px] text-ink/45 mt-1.5 leading-snug">
-                  {mode === 'digital'
-                    ? 'Recognises text and drops typed sticky notes / text items on the canvas. Drawings are ignored.'
-                    : 'AI redraws the photo cleanly (white background, crisp ink, same layout & colours) and traces it as editable pencil strokes.'}
+                  {mode === 'mix'
+                    ? 'OCR’s the handwriting into a handwriting font, then traces the boxes / arrows / freehand marks as single-line pen strokes. Best for whiteboards with both.'
+                    : 'OCR only — your writing becomes editable text items in a handwriting font. Drawings are ignored.'}
                 </p>
               </div>
             )}
@@ -480,7 +507,7 @@ export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes
                 className="flex-1 h-9 rounded-xl text-[13px] font-semibold text-white transition-colors"
                 style={{ background: '#D97435' }}
               >
-                {mode === 'digital' ? 'Scan with AI' : 'Redraw + import'}
+                Scan with AI
               </button>
             </div>
           </>
@@ -490,14 +517,6 @@ export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes
           <div className="px-5 py-10 flex flex-col items-center gap-3 text-ink/60">
             <Spinner />
             <p className="text-[12.5px]">Reading the whiteboard…</p>
-          </div>
-        )}
-
-        {stage === 'cleaning' && (
-          <div className="px-5 py-10 flex flex-col items-center gap-3 text-ink/60">
-            <Spinner />
-            <p className="text-[12.5px]">AI is redrawing your photo cleanly…</p>
-            <p className="text-[10.5px] text-ink/40">This usually takes 10–20 seconds.</p>
           </div>
         )}
 
@@ -551,12 +570,14 @@ export default function CameraScanModal({ getViewport, onCommit, onCommitStrokes
                 Cancel
               </button>
               <button
-                onClick={commitDigital}
-                disabled={accepted.size === 0}
+                onClick={commitReview}
+                disabled={accepted.size === 0 && mode !== 'mix'}
                 className="flex-1 h-9 rounded-xl text-[13px] font-semibold text-white transition-colors disabled:opacity-40"
                 style={{ background: '#D97435' }}
               >
-                Add {accepted.size} to canvas
+                {mode === 'mix'
+                  ? (accepted.size ? `Add ${accepted.size} + trace rest` : 'Trace drawings only')
+                  : `Add ${accepted.size} to canvas`}
               </button>
             </div>
           </>
