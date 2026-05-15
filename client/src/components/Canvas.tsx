@@ -88,6 +88,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   // Cancels any focus animation in flight so a new F-press doesn't fight a
   // previous one mid-flight.
   const focusAnimRef = useRef<number | null>(null);
+  // Remembers the pre-focus view so a second click on the same item's focus
+  // button restores it. Cleared on any user-initiated pan/zoom so the
+  // baseline never goes stale.
+  const focusReturnRef = useRef<{ id: string; view: { x: number; y: number; scale: number } } | null>(null);
 
   const inDrawMode  = drawOpen && drawTool === 'pencil';
   const inEraseMode = drawOpen && drawTool === 'eraser';
@@ -119,11 +123,46 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   // ids occupies ~70% of the visible viewport, centred. Used by the F-key
   // shortcut and the per-item focus button. Cancels any animation already
   // running so back-to-back presses don't fight each other.
+  function animateView(toX: number, toY: number, toScale: number, duration: number) {
+    if (focusAnimRef.current !== null) {
+      cancelAnimationFrame(focusAnimRef.current);
+      focusAnimRef.current = null;
+    }
+    // Use the React state at call time; mid-animation re-renders keep
+    // refreshing the closure, but each invocation snapshots its own `from`.
+    const from = { ...view };
+    const t0 = performance.now();
+    function step(now: number) {
+      const k = Math.min(1, (now - t0) / duration);
+      // easeOutCubic — quick deceleration feels responsive without overshoot.
+      const e = 1 - Math.pow(1 - k, 3);
+      setView({
+        x: from.x + (toX - from.x) * e,
+        y: from.y + (toY - from.y) * e,
+        scale: from.scale + (toScale - from.scale) * e,
+      });
+      if (k < 1) {
+        focusAnimRef.current = requestAnimationFrame(step);
+      } else {
+        focusAnimRef.current = null;
+      }
+    }
+    focusAnimRef.current = requestAnimationFrame(step);
+  }
   function focusOnIds(ids: string[], opts?: { fit?: number; duration?: number }) {
     const fit = opts?.fit ?? 0.7;
     const duration = opts?.duration ?? 360;
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    // Toggle: a second click on the same single-item focus button returns to
+    // the view we captured before zooming in.
+    if (ids.length === 1 && focusReturnRef.current && focusReturnRef.current.id === ids[0]) {
+      const saved = focusReturnRef.current.view;
+      focusReturnRef.current = null;
+      animateView(saved.x, saved.y, saved.scale, duration);
+      return;
+    }
 
     const targets = items.filter((it) => ids.includes(it.id));
     if (targets.length === 0) return;
@@ -143,30 +182,16 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     const toX = rect.width / 2 - cx * toScale;
     const toY = rect.height / 2 - cy * toScale;
 
-    if (focusAnimRef.current !== null) {
-      cancelAnimationFrame(focusAnimRef.current);
-      focusAnimRef.current = null;
+    // Save baseline only for single-item focus — that's the path with a
+    // toggle button. Multi-id focus (F-key on a selection) clears any
+    // pending toggle so a stray button click later doesn't snap to a stale
+    // view.
+    if (ids.length === 1) {
+      focusReturnRef.current = { id: ids[0], view: { ...view } };
+    } else {
+      focusReturnRef.current = null;
     }
-    // Use the React state at call time; mid-animation re-renders keep
-    // refreshing `focusOnIds`, but each invocation snapshots its own `from`.
-    const from = { ...view };
-    const t0 = performance.now();
-    function step(now: number) {
-      const k = Math.min(1, (now - t0) / duration);
-      // easeOutCubic — quick deceleration feels responsive without overshoot.
-      const e = 1 - Math.pow(1 - k, 3);
-      setView({
-        x: from.x + (toX - from.x) * e,
-        y: from.y + (toY - from.y) * e,
-        scale: from.scale + (toScale - from.scale) * e,
-      });
-      if (k < 1) {
-        focusAnimRef.current = requestAnimationFrame(step);
-      } else {
-        focusAnimRef.current = null;
-      }
-    }
-    focusAnimRef.current = requestAnimationFrame(step);
+    animateView(toX, toY, toScale, duration);
   }
 
   useImperativeHandle(ref, () => ({
@@ -245,6 +270,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     const rect = wrapRef.current!.getBoundingClientRect();
     const cx = clientX - rect.left;
     const cy = clientY - rect.top;
+    // Any manual zoom invalidates the focus-toggle baseline.
+    focusReturnRef.current = null;
     // Re-read view inside the setter so concurrent updates (wheel + buttons)
     // don't fight each other.
     setView((v) => {
@@ -259,7 +286,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     const rect = wrapRef.current!.getBoundingClientRect();
     zoomAround(rect.left + rect.width / 2, rect.top + rect.height / 2, view.scale * factor);
   }
-  function resetView() { setView({ x: 0, y: 0, scale: 1 }); }
+  function resetView() { focusReturnRef.current = null; setView({ x: 0, y: 0, scale: 1 }); }
 
   function onBgPointerDown(e: React.PointerEvent) {
     if (drawOpen && drawTool !== 'select') return;
@@ -276,6 +303,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
 
     if (!interactive) return;
     if (!e.shiftKey) setSelection(new Set());
+    // Manual pan invalidates the focus-toggle baseline.
+    focusReturnRef.current = null;
     setPanning(true);
     panStart.current = { px: e.clientX, py: e.clientY, vx: view.x, vy: view.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -349,6 +378,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         const factor = Math.exp(-e.deltaY * 0.0015);
         zoomAround(e.clientX, e.clientY, viewRef.current.scale * factor);
       } else {
+        focusReturnRef.current = null;
         setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
       }
     }
@@ -590,6 +620,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         view={view}
         canvasSize={size}
         onNavigate={(wx, wy) => {
+          focusReturnRef.current = null;
           // Centre the canvas view on the clicked world position.
           setView((v) => ({
             ...v,

@@ -802,7 +802,6 @@ function Sticky({
     : '0 2px 10px rgba(26,21,16,0.09)';
   const baseFS = d.fontSize ?? 12.5;
   const fontSize = baseFS * liveTextScale;
-  const hwClass = d.font === 'handwriting' ? ' font-handwriting' : '';
   // Stickies default to regular weight; B-toggle bumps to 700.
   const fontWeight = d.bold ? 700 : 400;
 
@@ -810,7 +809,7 @@ function Sticky({
     return (
       <textarea
         autoFocus
-        className={`w-full h-full resize-none border-0 outline-none p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap${hwClass}`}
+        className="w-full h-full resize-none border-0 outline-none p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap"
         placeholder="Type something…"
         value={d.text ?? ''}
         onChange={(e) => onUpdate({ data: { ...d, text: e.target.value } })}
@@ -830,7 +829,7 @@ function Sticky({
 
   return (
     <div
-      className={`w-full h-full p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap overflow-hidden cursor-text${hwClass}`}
+      className="w-full h-full p-[13px_15px] leading-[1.7] text-ink whitespace-pre-wrap overflow-hidden cursor-text"
       style={{
         background: d.color || '#FFF3C4',
         borderRadius: 16,
@@ -1487,14 +1486,12 @@ function TextOrLink({
   const ytId = isUrl ? youTubeId(txt.trim()) : null;
   const baseFS = d.fontSize ?? 16;
   const fontSize = baseFS * liveTextScale;
-  // Handwriting font only makes sense for plain text — drop it for URLs.
-  const isHandwriting = d.font === 'handwriting' && !isUrl;
 
   if (editing) {
     return (
       <textarea
         autoFocus
-        className={`w-full h-full resize-none p-1.5 leading-snug bg-paper rounded-lg outline outline-2 outline-amber${isHandwriting ? ' font-handwriting' : ''}`}
+        className="w-full h-full resize-none p-1.5 leading-snug bg-paper rounded-lg outline outline-2 outline-amber"
         value={txt}
         placeholder="Type text or paste a link…"
         onChange={(e) => onUpdate({ data: { ...d, url: '', title: e.target.value } })}
@@ -1543,19 +1540,18 @@ function TextOrLink({
   }
 
   // Text items legacy-default to bold (700) — preserve that when bold isn't
-  // explicitly set. Handwriting font ignores the bold flag visually: its
-  // weight already reads as "ink-on-paper" and 700 would crush the strokes.
+  // explicitly set.
   const isBold = d.bold !== false;
-  const fontWeight = isHandwriting ? 400 : isBold ? 700 : 400;
+  const fontWeight = isBold ? 700 : 400;
 
   return (
     <div
-      className={`w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5${isHandwriting ? ' font-handwriting' : ''}`}
+      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
       style={{
         fontSize,
         fontWeight,
-        lineHeight: isHandwriting ? 1.2 : 1.45,
-        letterSpacing: isHandwriting ? 'normal' : '-0.2px',
+        lineHeight: 1.45,
+        letterSpacing: '-0.2px',
         boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
       }}
     >

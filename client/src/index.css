@@ -46,12 +46,3 @@ button {
   user-select: none;
   -webkit-user-select: none;
 }
-
-/* Handwriting font used for AI-scanned whiteboard text. Browsers walk the
-   list per-glyph, so Chinese chars hit Ma Shan Zheng and Latin chars hit
-   Kalam — automatic mixed-script support without runtime detection. */
-.font-handwriting {
-  font-family: 'Kalam', 'Ma Shan Zheng', 'Plus Jakarta Sans', cursive;
-  font-weight: 400;
-  letter-spacing: 0.01em;
-}
