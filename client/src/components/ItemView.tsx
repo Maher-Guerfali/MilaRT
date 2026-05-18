@@ -23,8 +23,6 @@ interface Props {
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
-  /** Smoothly zooms/pans the camera so this item fills ~70% of the viewport. */
-  onFocus?: () => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -47,7 +45,7 @@ export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
   isMergeTarget,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
-  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument, onFocus,
+  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
 }: Props) {
   const mergeTargetIdRef = useRef<string | null>(null);
   // Drag-tracking. `wasSelected` records whether the item was already
@@ -442,24 +440,7 @@ export default function ItemView({
               </svg>
             </button>
           )}
-          {onFocus && (
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onFocus(); }}
-              title="Focus (F)"
-              className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
-            >
-              {/* Crosshair / fit-to-view glyph */}
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3.5" />
-                <path d="M12 3v3" />
-                <path d="M12 18v3" />
-                <path d="M3 12h3" />
-                <path d="M18 12h3" />
-              </svg>
-            </button>
-          )}
-          <button
+<button
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             className="w-[26px] h-[26px] rounded-full bg-ink text-paper shadow flex items-center justify-center"

@@ -6,6 +6,8 @@ interface Props {
   view: { x: number; y: number; scale: number };
   canvasSize: { w: number; h: number };
   onNavigate: (worldX: number, worldY: number) => void;
+  onFocus?: () => void;
+  canFocus?: boolean;
 }
 
 const MAP_PX = 140;
@@ -17,7 +19,7 @@ const ITEM_TYPE_COLOR: Record<string, string> = {
   board:  '#D97435',
 };
 
-export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) {
+export default function MiniMap({ items, view, canvasSize, onNavigate, onFocus, canFocus }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingRef = useRef(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -57,22 +59,21 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
     onNavigate(wx, wy);
   }
 
-  // Only the orange viewport rect is interactive — pointer events on the
-  // background map are intentionally disabled so regular mouse movement
-  // over the map doesn't produce a cursor change or accidental navigations.
-  function onRectPointerDown(e: React.PointerEvent<SVGRectElement>) {
+  // A click anywhere on the map jumps the camera to that point — no drag
+  // required. Pointer move while pressed keeps panning.
+  function onSvgPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     e.stopPropagation();
     draggingRef.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
     const rect = svgRef.current!.getBoundingClientRect();
     handleMapPoint(e.clientX - rect.left, e.clientY - rect.top);
   }
-  function onRectPointerMove(e: React.PointerEvent<SVGRectElement>) {
+  function onSvgPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     if (!draggingRef.current) return;
     const rect = svgRef.current!.getBoundingClientRect();
     handleMapPoint(e.clientX - rect.left, e.clientY - rect.top);
   }
-  function onRectPointerUp(e: React.PointerEvent<SVGRectElement>) {
+  function onSvgPointerUp(e: React.PointerEvent<SVGSVGElement>) {
     draggingRef.current = false;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   }
@@ -121,7 +122,11 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
           width={MAP_PX}
           height={MAP_PX}
           viewBox={`0 0 ${MAP_PX} ${MAP_PX}`}
-          style={{ display: 'block', touchAction: 'none' }}
+          style={{ display: 'block', touchAction: 'none', cursor: 'crosshair' }}
+          onPointerDown={onSvgPointerDown}
+          onPointerMove={onSvgPointerMove}
+          onPointerUp={onSvgPointerUp}
+          onPointerCancel={onSvgPointerUp}
         >
           {items.map((it) => {
             const p = project(it.x, it.y);
@@ -138,7 +143,7 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
               />
             );
           })}
-          {/* Current viewport — draggable amber rect. */}
+          {/* Current viewport — purely visual; clicks pass through to the svg. */}
           <rect
             x={v.x}
             y={v.y}
@@ -148,13 +153,33 @@ export default function MiniMap({ items, view, canvasSize, onNavigate }: Props) 
             stroke="#D97435"
             strokeWidth={1.5}
             rx={2}
-            style={{ cursor: draggingRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
-            onPointerDown={onRectPointerDown}
-            onPointerMove={onRectPointerMove}
-            onPointerUp={onRectPointerUp}
-            onPointerCancel={onRectPointerUp}
+            style={{ pointerEvents: 'none' }}
           />
         </svg>
+        {onFocus && (
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onFocus(); }}
+            disabled={!canFocus}
+            title="Focus on selection (toggle zoom)"
+            className="absolute bottom-1 right-1 w-[22px] h-[22px] rounded-md flex items-center justify-center transition-colors"
+            style={{
+              background: 'rgba(253,250,245,0.95)',
+              border: '1px solid rgba(26,21,16,0.15)',
+              color: canFocus ? '#1A1510' : 'rgba(26,21,16,0.25)',
+              cursor: canFocus ? 'pointer' : 'default',
+              boxShadow: '0 1px 4px rgba(26,21,16,0.10)',
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3.5" />
+              <path d="M12 3v3" />
+              <path d="M12 18v3" />
+              <path d="M3 12h3" />
+              <path d="M18 12h3" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );

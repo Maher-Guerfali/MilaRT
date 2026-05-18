@@ -91,7 +91,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   // Remembers the pre-focus view so a second click on the same item's focus
   // button restores it. Cleared on any user-initiated pan/zoom so the
   // baseline never goes stale.
-  const focusReturnRef = useRef<{ id: string; view: { x: number; y: number; scale: number } } | null>(null);
+  const focusReturnRef = useRef<{ id: string; cx: number; cy: number; scale: number } | null>(null);
 
   const inDrawMode  = drawOpen && drawTool === 'pencil';
   const inEraseMode = drawOpen && drawTool === 'eraser';
@@ -155,15 +155,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
 
-    // Toggle: a second click on the same single-item focus button returns to
-    // the view we captured before zooming in.
-    if (ids.length === 1 && focusReturnRef.current && focusReturnRef.current.id === ids[0]) {
-      const saved = focusReturnRef.current.view;
-      focusReturnRef.current = null;
-      animateView(saved.x, saved.y, saved.scale, duration);
-      return;
-    }
-
     const targets = items.filter((it) => ids.includes(it.id));
     if (targets.length === 0) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -178,19 +169,20 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     const cx = minX + bboxW / 2;
     const cy = minY + bboxH / 2;
     const rawScale = Math.min((rect.width * fit) / bboxW, (rect.height * fit) / bboxH);
-    const toScale = clampScale(rawScale);
+    const inScale = clampScale(rawScale);
+
+    // Toggle behaviour: a second focus on the same target zooms BACK OUT
+    // around the same focus point (not to the previous arbitrary view).
+    const key = ids.length === 1 ? ids[0] : ids.slice().sort().join(',');
+    const saved = focusReturnRef.current;
+    const isSecondPress = saved && saved.id === key && Math.abs(saved.scale - view.scale) < 0.01;
+    const toScale = isSecondPress ? clampScale(inScale / 3) : inScale;
     const toX = rect.width / 2 - cx * toScale;
     const toY = rect.height / 2 - cy * toScale;
 
-    // Save baseline only for single-item focus — that's the path with a
-    // toggle button. Multi-id focus (F-key on a selection) clears any
-    // pending toggle so a stray button click later doesn't snap to a stale
-    // view.
-    if (ids.length === 1) {
-      focusReturnRef.current = { id: ids[0], view: { ...view } };
-    } else {
-      focusReturnRef.current = null;
-    }
+    focusReturnRef.current = isSecondPress
+      ? null
+      : { id: key, cx, cy, scale: inScale };
     animateView(toX, toY, toScale, duration);
   }
 
@@ -577,7 +569,6 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onSetMergeTarget={setMergeTargetId}
             onMerge={onMerge}
             onOpenDocument={onOpenDocument}
-            onFocus={() => focusOnIds([it.id])}
           />
         ))}
       </div>
@@ -627,6 +618,12 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             x: size.w / 2 - wx * v.scale,
             y: size.h / 2 - wy * v.scale,
           }));
+        }}
+        canFocus={selection.size > 0 || items.length > 0}
+        onFocus={() => {
+          const ids = selection.size > 0 ? Array.from(selection) : items.map((it) => it.id);
+          if (ids.length === 0) return;
+          focusOnIds(ids);
         }}
       />
 
