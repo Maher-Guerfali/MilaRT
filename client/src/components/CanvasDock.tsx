@@ -34,9 +34,9 @@ function DockBtn({ Icon, label, active, disabled, onClick }: DockBtnProps) {
         disabled={disabled}
         onMouseEnter={() => setHov(true)}
         onMouseLeave={() => setHov(false)}
-        className="rounded-xl border-0 flex flex-col items-center justify-center gap-[3px] text-[8.5px] font-bold uppercase tracking-[0.06em] transition-all"
+        className="rounded-lg border-0 flex flex-col items-center justify-center gap-[2px] text-[7.5px] font-bold uppercase tracking-[0.05em] transition-all"
         style={{
-          width: 46, height: 42,
+          width: 38, height: 34,
           cursor: disabled ? 'default' : 'pointer',
           background: active
             ? 'linear-gradient(135deg, #D97435, #F08848)'
@@ -45,7 +45,7 @@ function DockBtn({ Icon, label, active, disabled, onClick }: DockBtnProps) {
           boxShadow: active ? '0 2px 12px rgba(217,116,53,0.40)' : 'none',
         }}
       >
-        <Icon size={17} />
+        <Icon size={14} />
         <span>{label}</span>
       </button>
     </Tooltip>
@@ -84,7 +84,7 @@ export default function CanvasDock({
 
   return (
     <div
-      className="absolute top-[64px] right-[16px] rounded-2xl border border-ink/10 p-[5px] flex flex-col gap-[2px]"
+      className="absolute bottom-[16px] left-[16px] rounded-xl border border-ink/10 p-[4px] flex flex-col gap-[1px]"
       style={{
         background: 'rgba(253,250,245,0.95)',
         backdropFilter: 'blur(14px)',
@@ -101,9 +101,9 @@ export default function CanvasDock({
           onPointerDown={onDrawPointerDown}
           onPointerMove={onDrawPointerMove}
           onPointerUp={onDrawPointerUp}
-          className="rounded-xl border-0 flex flex-col items-center justify-center gap-[3px] text-[8.5px] font-bold uppercase tracking-[0.06em] transition-all select-none"
+          className="rounded-lg border-0 flex flex-col items-center justify-center gap-[2px] text-[7.5px] font-bold uppercase tracking-[0.05em] transition-all select-none"
           style={{
-            width: 46, height: 42,
+            width: 38, height: 34,
             cursor: 'pointer',
             background: drawOpen
               ? 'linear-gradient(135deg, #D97435, #F08848)'
@@ -113,7 +113,7 @@ export default function CanvasDock({
             touchAction: 'none',
           }}
         >
-          <PenIcon size={17} />
+          <PenIcon size={14} />
           <span>Draw</span>
         </button>
       </Tooltip>
