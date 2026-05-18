@@ -13,6 +13,8 @@ interface Props {
   strokes: Stroke[];
   view: { x: number; y: number; scale: number };
   isMergeTarget?: boolean;
+  /** True when this board item is the active drop target during a drag. */
+  isBoardDropTarget?: boolean;
   onSelect: (additive: boolean) => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
@@ -23,6 +25,10 @@ interface Props {
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  /** Live drop-target highlight on a board element while dragging. */
+  onSetBoardDropTarget?: (id: string | null) => void;
+  /** Drop dragged items inside the given board (deferred to BoardPage). */
+  onDropIntoBoard?: (srcIds: string[], boardItemId: string) => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -43,11 +49,20 @@ function youTubeId(raw: string): string | null {
 
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
-  isMergeTarget,
+  isMergeTarget, isBoardDropTarget,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
   onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
+  onSetBoardDropTarget, onDropIntoBoard,
 }: Props) {
   const mergeTargetIdRef = useRef<string | null>(null);
+  // Per-drag bookkeeping for the board hover-grow feature.
+  // `current` is the board id currently growing (will-drop-inside).
+  // `visited` records boards we've already hovered+left during this drag —
+  // re-entering them doesn't re-trigger the grow, so a slide-back drop
+  // lands ON TOP of the board rather than inside it.
+  const boardDropRef = useRef<{ current: string | null; visited: Set<string> }>(
+    { current: null, visited: new Set() }
+  );
   // Drag-tracking. `wasSelected` records whether the item was already
   // selected at press time, which lets endDrag distinguish "this press
   // just selected the item" from "this press is a click-to-activate".
@@ -113,6 +128,21 @@ export default function ItemView({
     return null;
   }
 
+  // Topmost board element under the cursor that isn't part of the dragged
+  // selection — used for the hover-grow / drop-inside behaviour.
+  function findBoardTargetAt(clientX: number, clientY: number, excludeIds: string[]): string | null {
+    const els = document.elementsFromPoint(clientX, clientY);
+    for (const el of els) {
+      const itemEl = (el as HTMLElement).closest('[data-item-id]') as HTMLElement | null;
+      if (!itemEl) continue;
+      const id = itemEl.getAttribute('data-item-id');
+      if (!id || excludeIds.includes(id)) continue;
+      const t = itemEl.getAttribute('data-item-type');
+      if (t === 'board') return id;
+    }
+    return null;
+  }
+
   function startDrag(e: React.PointerEvent, mode: 'move' | 'resize', corner: Corner = 'br') {
     if (!interactive) return;
     e.stopPropagation();
@@ -121,11 +151,11 @@ export default function ItemView({
     // If the item isn't selected yet, just select it — don't start a drag.
     // The user can then press a second time (while selected) to drag.
     if (!wasSelected && mode === 'move') {
-      onSelect(e.shiftKey);
+      onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
       return;
     }
 
-    if (!wasSelected || mode === 'resize') onSelect(e.shiftKey);
+    if (!wasSelected || mode === 'resize') onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
     const dataAny = item.data as { imgFrame?: { x: number; y: number; w: number; h: number } };
     const fr = dataAny.imgFrame;
     dragRef.current = {
@@ -172,6 +202,33 @@ export default function ItemView({
         if (target !== mergeTargetIdRef.current) {
           mergeTargetIdRef.current = target;
           onSetMergeTarget(target);
+        }
+      }
+      // Hover-into-board: while dragging anything (except a board onto
+      // itself), the first time we hover a given board element it grows
+      // ("will drop inside"). Sliding away marks that board as visited,
+      // so a subsequent re-entry stays flat and the next release will
+      // drop ON TOP of the board rather than inside it.
+      if (d.moved && onSetBoardDropTarget && item.type !== 'board') {
+        const excludeIds = selectionIds.length ? selectionIds : [item.id];
+        const target = findBoardTargetAt(e.clientX, e.clientY, excludeIds);
+        const state = boardDropRef.current;
+        if (target) {
+          if (state.visited.has(target)) {
+            // Re-entry after sliding away — don't grow.
+            if (state.current !== null) {
+              state.current = null;
+              onSetBoardDropTarget(null);
+            }
+          } else if (state.current !== target) {
+            state.current = target;
+            onSetBoardDropTarget(target);
+          }
+        } else if (state.current) {
+          // Just slid off the board — remember it so re-entry won't grow.
+          state.visited.add(state.current);
+          state.current = null;
+          onSetBoardDropTarget(null);
         }
       }
       return;
@@ -243,7 +300,21 @@ export default function ItemView({
     mergeTargetIdRef.current = null;
     onSetMergeTarget?.(null);
 
-    if (!droppedToStorage && !mergedAway) {
+    // Drop-into-board: only if we released while the grow effect was
+    // still active (board was hovered for the first time). Sliding away
+    // and back drops on top instead (state.current would be null here).
+    let droppedIntoBoard = false;
+    const boardDrop = boardDropRef.current.current;
+    if (!droppedToStorage && !mergedAway && d.mode === 'move' && d.moved &&
+        boardDrop && onDropIntoBoard) {
+      const ids = selectionIds.length > 0 ? selectionIds : [item.id];
+      onDropIntoBoard(ids, boardDrop);
+      droppedIntoBoard = true;
+    }
+    boardDropRef.current = { current: null, visited: new Set() };
+    onSetBoardDropTarget?.(null);
+
+    if (!droppedToStorage && !mergedAway && !droppedIntoBoard) {
       if (d.mode === 'move') {
         onUpdate({ x: finalBox.x, y: finalBox.y });
       } else {
@@ -274,7 +345,7 @@ export default function ItemView({
     lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    if (droppedToStorage || mergedAway) return;
+    if (droppedToStorage || mergedAway || droppedIntoBoard) return;
 
     // Click-to-activate. Only fires when:
     //   - this was a press, not a drag (no movement),
@@ -328,7 +399,12 @@ export default function ItemView({
         zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
         filter: !isMergeTarget && selected
           ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))'
-          : undefined,
+          : isBoardDropTarget
+            ? 'drop-shadow(0 10px 26px rgba(217,116,53,0.45))'
+            : undefined,
+        transform: isBoardDropTarget ? 'scale(1.06)' : undefined,
+        transformOrigin: 'center center',
+        transition: 'transform 160ms cubic-bezier(0.4,0,0.2,1), filter 160ms ease',
       }}
       onPointerDown={(e) => {
         if (e.button !== 0) return;

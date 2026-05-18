@@ -349,6 +349,55 @@ export default function BoardPage() {
     nav(`/r/${code}/b/${bid}`);
   }
 
+  // Move dragged items into the nested board referenced by `boardItemId`.
+  // Creates the nested board on demand (mirrors enterBoard), then writes
+  // the source items into it and removes them from the current board.
+  async function dropIntoBoard(srcIds: string[], boardItemId: string) {
+    if (!code || !board) return;
+    const targetItem = items.find((x) => x.id === boardItemId);
+    if (!targetItem || targetItem.type !== 'board') return;
+    const sources = items.filter((x) => srcIds.includes(x.id));
+    if (sources.length === 0) return;
+
+    const d = targetItem.data as Partial<BoardRefData>;
+    let bid = d.boardId;
+    let updatedItems = items;
+    if (!bid) {
+      const nested = await api.createNestedBoard(code, board._id, d.name || 'Untitled');
+      bid = nested._id;
+      updatedItems = items.map((x) =>
+        x.id === boardItemId ? { ...x, data: { ...(x.data as object), boardId: bid } } : x
+      );
+    }
+
+    // Re-centre dropped items around the middle of the target board.
+    const targetCenter = {
+      x: targetItem.x + targetItem.w / 2,
+      y: targetItem.y + targetItem.h / 2,
+    };
+    let srcMinX = Infinity, srcMinY = Infinity, srcMaxX = -Infinity, srcMaxY = -Infinity;
+    for (const s of sources) {
+      if (s.x < srcMinX) srcMinX = s.x;
+      if (s.y < srcMinY) srcMinY = s.y;
+      if (s.x + s.w > srcMaxX) srcMaxX = s.x + s.w;
+      if (s.y + s.h > srcMaxY) srcMaxY = s.y + s.h;
+    }
+    const srcCenterX = (srcMinX + srcMaxX) / 2;
+    const srcCenterY = (srcMinY + srcMaxY) / 2;
+    const dx = targetCenter.x - srcCenterX;
+    const dy = targetCenter.y - srcCenterY;
+    const movedSources = sources.map((s) => ({ ...s, x: s.x + dx, y: s.y + dy }));
+
+    const nested = await api.getBoard(bid);
+    const nestedItems = [...nested.items, ...movedSources];
+    await api.saveBoard(bid, nestedItems, nested.strokes || []);
+
+    const remaining = updatedItems.filter((x) => !srcIds.includes(x.id));
+    setItems(remaining);
+    await api.saveBoard(board._id, remaining, strokes, name);
+    savedRef.current = JSON.stringify({ items: remaining, strokes, name });
+  }
+
   function toggleDraw() {
     setDrawOpen((o) => {
       const next = !o;
@@ -480,6 +529,7 @@ export default function BoardPage() {
           onSendToStorage={sendToStorage}
           onRestoreFromStorageAt={restoreFromStorageAt}
           onMerge={mergeItems}
+          onDropIntoBoard={dropIntoBoard}
           onOpenDocument={setOpenDocumentId}
           peers={peers}
           onLocalCursorMove={sendCursor}

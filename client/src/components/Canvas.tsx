@@ -32,6 +32,8 @@ interface Props {
   onSendToStorage?: (id: string) => void;
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
+  /** Move the given items into the nested board referenced by boardItemId. */
+  onDropIntoBoard?: (srcIds: string[], boardItemId: string) => void;
   onOpenDocument?: (id: string) => void;
   /** Remote peers' cursors (rendered as an overlay). */
   peers?: Peer[];
@@ -71,7 +73,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
-    onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument,
+    onSendToStorage, onRestoreFromStorageAt, onMerge, onDropIntoBoard, onOpenDocument,
     peers, onLocalCursorMove,
   } = props;
 
@@ -80,6 +82,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
+  const [boardDropTargetId, setBoardDropTargetId] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
@@ -559,6 +562,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             strokes={strokes}
             view={view}
             isMergeTarget={mergeTargetId === it.id}
+            isBoardDropTarget={boardDropTargetId === it.id}
             onSelect={(additive) => selectItem(it.id, additive)}
             onUpdate={(patch) => onUpdate(it.id, patch)}
             onMoveGroup={moveGroup}
@@ -568,6 +572,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onSendToStorage={onSendToStorage}
             onSetMergeTarget={setMergeTargetId}
             onMerge={onMerge}
+            onSetBoardDropTarget={setBoardDropTargetId}
+            onDropIntoBoard={onDropIntoBoard}
             onOpenDocument={onOpenDocument}
           />
         ))}
