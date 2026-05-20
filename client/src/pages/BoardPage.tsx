@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { nanoid } from 'nanoid';
 import { api } from '../api';
 import type { Board, BaseItem, BoardRefData, Stroke, AIOperation } from '../types';
 import Canvas, { type CanvasHandle } from '../components/Canvas';
@@ -330,6 +331,78 @@ export default function BoardPage() {
     });
   }
 
+  // Right-click → "Export here" on a board component.
+  // Fetches the nested board's items + strokes, then drops them onto the
+  // current canvas with their bbox centred on the board component.
+  async function exportBoardHere(itemId: string) {
+    const it = items.find((x) => x.id === itemId);
+    if (!it || it.type !== 'board') return;
+    const d = it.data as Partial<BoardRefData>;
+    if (!d.boardId) {
+      alert('This board is empty — open it first to create its contents.');
+      return;
+    }
+    let child: Board;
+    try {
+      child = await api.getBoard(d.boardId);
+    } catch (e) {
+      alert(`Could not load board: ${(e as Error).message}`);
+      return;
+    }
+    const childItems = child.items || [];
+    const childStrokes = child.strokes || [];
+    if (childItems.length === 0 && childStrokes.length === 0) return;
+
+    // Bounding box of the child's contents (items + strokes).
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of childItems) {
+      minX = Math.min(minX, c.x);
+      minY = Math.min(minY, c.y);
+      maxX = Math.max(maxX, c.x + c.w);
+      maxY = Math.max(maxY, c.y + c.h);
+    }
+    for (const s of childStrokes) {
+      for (let i = 0; i < s.points.length; i += 3) {
+        const px = s.points[i], py = s.points[i + 1];
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+      }
+    }
+    if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+
+    const childCX = (minX + maxX) / 2;
+    const childCY = (minY + maxY) / 2;
+    const targetCX = it.x + it.w / 2;
+    const targetCY = it.y + it.h / 2;
+    const dx = targetCX - childCX;
+    const dy = targetCY - childCY;
+
+    setItems((xs) => {
+      const baseZ = xs.length;
+      const added: BaseItem[] = childItems.map((c, i) => ({
+        ...c,
+        // Fresh ids so the cloned items don't collide with anything (including
+        // sibling nested boards that all share the same imported children).
+        id: nanoid(10),
+        x: c.x + dx,
+        y: c.y + dy,
+        z: baseZ + i,
+      }));
+      return [...xs, ...added];
+    });
+    if (childStrokes.length) {
+      setStrokes((prev) => [
+        ...prev,
+        ...childStrokes.map((s) => ({
+          ...s,
+          points: s.points.map((v, i) => (i % 3 === 0 ? v + dx : i % 3 === 1 ? v + dy : v)),
+        })),
+      ]);
+    }
+  }
+
   async function enterBoard(itemId: string) {
     if (!code || !board) return;
     const it = items.find((x) => x.id === itemId);
@@ -477,6 +550,7 @@ export default function BoardPage() {
           onAddStroke={addStroke}
           onMoveLayer={moveLayer}
           onEnterBoard={enterBoard}
+          onExportBoardHere={exportBoardHere}
           onSendToStorage={sendToStorage}
           onRestoreFromStorageAt={restoreFromStorageAt}
           onMerge={mergeItems}

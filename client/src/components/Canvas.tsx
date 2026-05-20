@@ -29,6 +29,7 @@ interface Props {
   onAddStroke: (s: Stroke) => void;
   onMoveLayer: (id: string, dir: 'forward' | 'backward') => void;
   onEnterBoard: (itemId: string) => void;
+  onExportBoardHere?: (itemId: string) => void;
   onSendToStorage?: (id: string) => void;
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
@@ -51,7 +52,7 @@ export interface CanvasHandle {
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 4;
-const ZOOM_STEP = 1.2;
+const ZOOM_STEP = 1.45;
 const SIZE_TO_PX: Record<SizeKey, number> = { sm: 2, md: 4, lg: 8 };
 
 function clampScale(s: number) {
@@ -71,6 +72,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
+    onExportBoardHere,
     onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument,
     peers, onLocalCursorMove,
   } = props;
@@ -367,7 +369,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
         // Multiplicative zoom — exp keeps zoom in/out symmetric and
         // safe for large trackpad deltas (the old (1 + delta) form
         // could go negative and flip the canvas).
-        const factor = Math.exp(-e.deltaY * 0.0015);
+        const factor = Math.exp(-e.deltaY * 0.003);
         zoomAround(e.clientX, e.clientY, viewRef.current.scale * factor);
       } else {
         focusReturnRef.current = null;
@@ -564,6 +566,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onMoveGroup={moveGroup}
             onDelete={() => onDelete(it.id)}
             onEnterBoard={() => onEnterBoard(it.id)}
+            onExportBoardHere={onExportBoardHere ? () => onExportBoardHere(it.id) : undefined}
             onMoveLayer={onMoveLayer}
             onSendToStorage={onSendToStorage}
             onSetMergeTarget={setMergeTargetId}
