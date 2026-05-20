@@ -1235,14 +1235,41 @@ function ImageBox({
         />
       )}
 
-      {/* AI edit button — bottom-left, visible when selected */}
-      {selected && !aiLoading && (
+      {/* AI controls live in a single bottom-left anchored layer that
+          counter-scales with the canvas zoom so the button and prompt bar
+          stay readable when zoomed out and don't bloat when zoomed in.
+          The counter-scale is clamped so on a tiny image the controls
+          don't overflow it, and on a huge image they don't shrink away. */}
+      {selected && (() => {
+        // Roughly: keep on-screen UI ~constant via 1/scale, but allow it to
+        // grow on big images (so the AI button isn't a speck on a 2000px
+        // image) and never exceed ~25% of the image's smallest side.
+        const inv = 1 / view.scale;
+        const imageMin = Math.min(item.w, item.h);
+        const imageBoost = Math.max(1, Math.min(2.4, imageMin / 220));
+        const raw = inv * imageBoost;
+        const maxByImage = imageMin / 100; // 100 = base button design width-ish
+        const uiScale = Math.max(0.7, Math.min(raw, Math.max(0.7, maxByImage)));
+        return (
+      <div
+        className="absolute z-20"
+        style={{
+          left: 8,
+          bottom: 8,
+          transform: `scale(${uiScale})`,
+          transformOrigin: 'bottom left',
+          // Make sure children's pointer events still hit normally.
+          pointerEvents: 'none',
+        }}
+      >
+        <div style={{ pointerEvents: 'auto', position: 'relative' }}>
+      {!aiLoading && (
         <button
           data-no-item-drag
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); setAiOpen((o) => !o); }}
           title="Edit with AI"
-          className="absolute bottom-2 left-2 w-7 h-7 rounded-full flex items-center justify-center shadow-md transition-all z-20"
+          className="w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all"
           style={{
             background: aiOpen ? '#D97435' : 'rgba(253,250,245,0.95)',
             color: aiOpen ? 'white' : '#D97435',
@@ -1253,10 +1280,9 @@ function ImageBox({
         </button>
       )}
 
-      {/* Timer badge while generating */}
       {aiLoading && (
         <div
-          className="absolute bottom-2 left-2 px-2 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1 z-20"
+          className="px-3 py-1.5 rounded-full text-[12px] font-bold text-white flex items-center gap-1.5"
           style={{ background: '#D97435' }}
         >
           <span className="animate-pulse">✦</span>
@@ -1264,17 +1290,18 @@ function ImageBox({
         </div>
       )}
 
-      {/* AI prompt panel */}
-      {aiOpen && selected && !aiLoading && (
+      {aiOpen && !aiLoading && (
         <div
           data-no-item-drag
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute bottom-10 left-0 right-0 mx-2 rounded-xl p-2 flex flex-col gap-2 z-30"
+          className="absolute rounded-xl p-2.5 flex flex-col gap-2"
           style={{
+            left: 0,
+            bottom: 48,
+            width: 300,
             background: 'rgba(253,250,245,0.97)',
             boxShadow: '0 4px 18px rgba(26,21,16,0.15)',
             border: aiRefs.length > 0 ? '1.5px solid rgba(217,116,53,0.45)' : '1px solid rgba(26,21,16,0.08)',
-            minWidth: 220,
           }}
         >
           {(aiRefs.length > 0 || aiRefLoading) && (
@@ -1317,13 +1344,13 @@ function ImageBox({
             <button
               onClick={() => refInputRef.current?.click()}
               title="Attach reference image"
-              className="relative w-7 h-7 rounded-md flex items-center justify-center transition-colors shrink-0"
+              className="relative w-8 h-8 rounded-md flex items-center justify-center transition-colors shrink-0"
               style={{
                 background: aiRefs.length > 0 ? '#D97435' : 'transparent',
                 color: aiRefs.length > 0 ? 'white' : 'rgba(26,21,16,0.55)',
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
               {aiRefs.length > 0 && (
@@ -1350,14 +1377,14 @@ function ImageBox({
               onChange={(e) => setAiPrompt(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') runAIEdit(); if (e.key === 'Escape') setAiOpen(false); }}
               placeholder={aiRefs.length > 0 ? 'Describe how to use the reference…' : 'Describe the edit…'}
-              className="flex-1 min-w-0 text-[11px] bg-transparent outline-none text-ink placeholder:text-ink/35"
+              className="flex-1 min-w-0 text-[13px] bg-transparent outline-none text-ink placeholder:text-ink/35 py-1"
               style={{ fontFamily: 'inherit' }}
             />
             <button
               onClick={() => runAIEdit(1)}
               disabled={!aiPrompt.trim()}
               title="Generate one image"
-              className="h-6 px-2.5 rounded-lg text-[10px] font-bold text-white transition-all disabled:opacity-40 shrink-0"
+              className="h-8 px-3 rounded-lg text-[12px] font-bold text-white transition-all disabled:opacity-40 shrink-0"
               style={{ background: '#D97435' }}
             >
               Go
@@ -1366,18 +1393,22 @@ function ImageBox({
               onClick={() => runAIEdit(4)}
               disabled={!aiPrompt.trim()}
               title="Generate 4 variations to pick from"
-              className="h-6 px-2 rounded-lg text-[10px] font-bold transition-all disabled:opacity-40 shrink-0 flex items-center gap-0.5"
+              className="h-8 px-2.5 rounded-lg text-[12px] font-bold transition-all disabled:opacity-40 shrink-0 flex items-center gap-0.5"
               style={{
                 background: 'rgba(217,116,53,0.12)',
                 color: '#D97435',
                 border: '1px solid rgba(217,116,53,0.45)',
               }}
             >
-              <span className="text-[8px] opacity-70">×</span>4
+              <span className="text-[10px] opacity-70">×</span>4
             </button>
           </div>
         </div>
       )}
+        </div>
+      </div>
+        );
+      })()}
 
       {/* Variant picker — shown after a ×N generation. Click a thumb to
           commit it; the rest are discarded. */}
