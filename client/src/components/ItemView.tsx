@@ -20,6 +20,7 @@ interface Props {
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
   onDelete: () => void;
   onEnterBoard: () => void;
+  onExportBoardHere?: () => void;
   onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
   onSendToStorage?: (id: string) => void;
   onSetMergeTarget?: (id: string | null) => void;
@@ -50,7 +51,7 @@ function youTubeId(raw: string): string | null {
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
   isMergeTarget, isBoardDropTarget,
-  onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onMoveLayer,
+  onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onExportBoardHere, onMoveLayer,
   onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
   onSetBoardDropTarget, onDropIntoBoard,
 }: Props) {
@@ -415,9 +416,15 @@ export default function ItemView({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onContextMenu={(e) => {
-        if (item.type !== 'image') return;
-        const url = (item.data as Partial<ImageData>).url;
-        if (!url) return;
+        if (item.type === 'image') {
+          const url = (item.data as Partial<ImageData>).url;
+          if (!url) return;
+        } else if (item.type === 'board') {
+          // Only show board menu if we have something to do.
+          if (!onExportBoardHere) return;
+        } else {
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         if (!selected) onSelect(false);
@@ -573,6 +580,16 @@ export default function ItemView({
           canSendToStorage={!!onSendToStorage}
           onClose={() => setCtxMenu(null)}
           onSendToStorage={onSendToStorage ? () => onSendToStorage(item.id) : undefined}
+          onDelete={onDelete}
+        />
+      )}
+      {ctxMenu && item.type === 'board' && onExportBoardHere && (
+        <BoardContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onEnter={onEnterBoard}
+          onExportHere={onExportBoardHere}
           onDelete={onDelete}
         />
       )}
@@ -798,6 +815,99 @@ function ImageContextMenu({
           disabled={it.disabled}
           onClick={run(it.action)}
           className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          style={it.danger ? { color: '#C0392B' } : undefined}
+        >
+          <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
+          <span className="flex-1">{it.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+function BoardContextMenu({
+  x, y, onClose, onEnter, onExportHere, onDelete,
+}: {
+  x: number; y: number;
+  onClose: () => void;
+  onEnter: () => void;
+  onExportHere: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let nx = x, ny = y;
+    if (nx + rect.width + pad > window.innerWidth) nx = window.innerWidth - rect.width - pad;
+    if (ny + rect.height + pad > window.innerHeight) ny = window.innerHeight - rect.height - pad;
+    if (nx !== x || ny !== y) setPos({ x: Math.max(pad, nx), y: Math.max(pad, ny) });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function run(action: () => void) {
+    return (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onClose();
+      action();
+    };
+  }
+
+  const entries: Array<{ label: string; icon: ReactNode; action: () => void; danger?: boolean }> = [
+    {
+      label: 'Open board',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12h14" /><path d="m13 6 6 6-6 6" />
+        </svg>
+      ),
+      action: onEnter,
+    },
+    {
+      label: 'Export here',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 3v12" />
+          <path d="m7 10 5 5 5-5" />
+          <rect x="3" y="17" width="18" height="4" rx="1" />
+        </svg>
+      ),
+      action: onExportHere,
+    },
+    {
+      label: 'Delete',
+      icon: <TrashIcon size={14} />,
+      action: onDelete,
+      danger: true,
+    },
+  ];
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-no-item-drag
+      onPointerDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+      className="fixed z-[100000] min-w-[180px] py-1 rounded-xl text-[12px] text-ink"
+      style={{
+        left: pos.x,
+        top: pos.y,
+        background: 'rgba(253,250,245,0.98)',
+        border: '1px solid rgba(26,21,16,0.10)',
+        boxShadow: '0 10px 28px rgba(26,21,16,0.18), 0 2px 6px rgba(26,21,16,0.10)',
+        backdropFilter: 'blur(6px)',
+      }}
+    >
+      {entries.map((it, i) => (
+        <button
+          key={i}
+          onClick={run(it.action)}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] transition-colors"
           style={it.danger ? { color: '#C0392B' } : undefined}
         >
           <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
