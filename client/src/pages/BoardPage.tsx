@@ -163,6 +163,20 @@ export default function BoardPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto zoom-out to fit all content once per board entry, so large boards
+  // open on an overview instead of forcing the user to zoom out by hand.
+  const autoFitRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading || !board) return;
+    if (autoFitRef.current === board._id) return;
+    autoFitRef.current = board._id;
+    // Wait a frame so the freshly-mounted Canvas has measured its size.
+    const raf = requestAnimationFrame(() => {
+      canvasRef.current?.fitAll();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [loading, board]);
+
   // Show tutorial on very first visit
   useEffect(() => {
     try {

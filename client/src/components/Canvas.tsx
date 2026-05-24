@@ -48,6 +48,9 @@ export interface CanvasHandle {
   /** Smoothly animate the camera so the given items fit (~70% default) the
    *  viewport. Used by the F shortcut and the per-item focus button. */
   focusOnIds: (ids: string[], opts?: { fit?: number; duration?: number }) => void;
+  /** Fit ALL content (items + strokes) into the viewport. Used on board
+   *  entry so large boards open already zoomed out to an overview. */
+  fitAll: (opts?: { fit?: number; duration?: number; animate?: boolean }) => void;
 }
 
 const MIN_SCALE = 0.1;
@@ -187,11 +190,55 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       : { id: key, cx, cy, scale: inScale };
     animateView(toX, toY, toScale, duration);
   }
+  // Fit every item AND stroke into the viewport. Unlike focusOnIds this has
+  // no toggle behaviour and never zooms IN past 100% — entering a board
+  // should land on a comfortable overview, not magnify a single sticky.
+  function fitAll(opts?: { fit?: number; duration?: number; animate?: boolean }) {
+    const fit = opts?.fit ?? 0.85;
+    const duration = opts?.duration ?? 420;
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const it of items) {
+      if (it.x < minX) minX = it.x;
+      if (it.y < minY) minY = it.y;
+      if (it.x + it.w > maxX) maxX = it.x + it.w;
+      if (it.y + it.h > maxY) maxY = it.y + it.h;
+    }
+    for (const s of strokes) {
+      for (let i = 0; i < s.points.length; i += 3) {
+        const px = s.points[i], py = s.points[i + 1];
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+      }
+    }
+    if (!isFinite(minX)) return; // empty board — leave the default view
+
+    const bboxW = Math.max(1, maxX - minX);
+    const bboxH = Math.max(1, maxY - minY);
+    const cx = minX + bboxW / 2;
+    const cy = minY + bboxH / 2;
+    const rawScale = Math.min((rect.width * fit) / bboxW, (rect.height * fit) / bboxH);
+    const toScale = clampScale(Math.min(1, rawScale));
+    const toX = rect.width / 2 - cx * toScale;
+    const toY = rect.height / 2 - cy * toScale;
+
+    focusReturnRef.current = null;
+    if (opts?.animate === false) {
+      setView({ x: toX, y: toY, scale: toScale });
+    } else {
+      animateView(toX, toY, toScale, duration);
+    }
+  }
 
   useImperativeHandle(ref, () => ({
     getCenter: centerOfView,
     getViewportWorld: viewportWorld,
     focusOnIds,
+    fitAll,
   }));
 
   // Track wrap size so the mini-map can draw the viewport rect accurately.
