@@ -22,7 +22,11 @@ const ANIMALS = [
 function randomName(): string {
   const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
   const b = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
-  return `${a}${b}${Math.floor(Math.random() * 90 + 10)}`;
+  return `${a}${b}${Math.floor(Math.random() * 90 + 10)}`.toLowerCase();
+}
+
+function smoothScrollTo(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 type Tab = 'quick' | 'signin';
@@ -39,7 +43,13 @@ export default function Landing() {
   // ── Quick-join state ──────────────────────────────────────────────
   const [tab, setTab] = useState<Tab>('quick');
   const existing = useMemo(() => loadIdentity(), []);
+  // Pre-fill a random display name on open. It's shown greyed-out so people
+  // can tell it's auto-generated and editable; the grey lifts once they type.
   const [name, setName] = useState<string>(existing?.name ?? randomName());
+  const [nameTouched, setNameTouched] = useState<boolean>(!!existing?.name);
+
+  // Room name the user is about to create — drives the confirmation popup.
+  const [pendingCreate, setPendingCreate] = useState<string | null>(null);
 
   // ── Sign-in state ─────────────────────────────────────────────────
   const [mode, setMode] = useState<Mode>('signin');
@@ -49,33 +59,54 @@ export default function Landing() {
   const trimmedRoom = room.trim();
 
   function persistIdentity() {
-    const n = name.trim() || randomName();
+    const n = (name.trim() || randomName()).toLowerCase();
     saveIdentity(n);
   }
 
+  // Join an existing room. If the room doesn't exist yet, instead of silently
+  // creating it (which led to spammy throwaway rooms), pop a confirmation so
+  // the user explicitly opts in to creating a new one.
   async function handleJoin() {
-    if (!trimmedRoom) { setErr('Type a room name to join.'); return; }
+    if (!trimmedRoom) { setErr('Insert a room name first.'); return; }
     setBusy(true); setErr(null);
     try {
       const r = await api.getRoom(trimmedRoom);
       persistIdentity();
       nav(`/r/${r.code}`);
     } catch {
-      setErr(`No room called "${trimmedRoom}" — try Create to make it.`);
+      setPendingCreate(trimmedRoom);
     } finally { setBusy(false); }
   }
 
+  // "Create" button: same confirmation flow. If the name is already taken we
+  // route the user to Join instead of creating a duplicate.
   async function handleCreate() {
-    if (!trimmedRoom) { setErr('Type a room name to create.'); return; }
+    if (!trimmedRoom) { setErr('Insert a room name first.'); return; }
     setBusy(true); setErr(null);
     try {
-      const r = await api.createRoom(trimmedRoom);
+      const r = await api.getRoom(trimmedRoom);
+      // Already exists — just join it, no new room spawned.
+      persistIdentity();
+      nav(`/r/${r.code}`);
+    } catch {
+      setPendingCreate(trimmedRoom);
+    } finally { setBusy(false); }
+  }
+
+  // Actually create the room after the user confirms the popup.
+  async function confirmCreate() {
+    const target = pendingCreate;
+    if (!target) return;
+    setPendingCreate(null);
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.createRoom(target);
       persistIdentity();
       nav(`/r/${r.code}`);
     } catch (e) {
       const msg = (e as Error).message || '';
       if (msg.includes('409') || msg.includes('name_taken')) {
-        setErr(`"${trimmedRoom}" is taken — try Join, or pick a different name.`);
+        setErr(`"${target}" was just taken — try Join instead.`);
       } else if (msg.includes('400') || msg.includes('too_short')) {
         setErr('Room name needs at least 2 letters or numbers.');
       } else {
@@ -134,10 +165,12 @@ export default function Landing() {
         <nav className="flex items-center gap-2 text-sm">
           <a
             href="#how"
+            onClick={(e) => { e.preventDefault(); smoothScrollTo('how'); }}
             className="hidden sm:inline-block px-3 py-2 text-ink/70 hover:text-ink rounded-lg"
           >How it works</a>
           <a
             href="#features"
+            onClick={(e) => { e.preventDefault(); smoothScrollTo('features'); }}
             className="hidden sm:inline-block px-3 py-2 text-ink/70 hover:text-ink rounded-lg"
           >Features</a>
           <button
@@ -189,41 +222,41 @@ export default function Landing() {
               </TabBtn>
             </div>
 
-            {/* Room name (shared by both tabs) */}
+            {/* Room name (shared by both tabs) — lowercase only, it becomes the URL. */}
             <Field label="Room name">
               <input
                 autoFocus
                 value={room}
-                onChange={(e) => setRoom(e.target.value)}
+                onChange={(e) => setRoom(e.target.value.toLowerCase())}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && tab === 'quick') {
                     if (e.shiftKey) handleCreate(); else handleJoin();
                   }
                 }}
-                placeholder="e.g. maher-projects"
+                placeholder="insert room name"
                 maxLength={30}
-                className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
+                className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors lowercase"
               />
             </Field>
 
             {tab === 'quick' ? (
               <>
                 <Field label="Your display name">
-                  <div className="flex gap-2">
-                    <input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      maxLength={24}
-                      placeholder="What should we call you?"
-                      className="flex-1 px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setName(randomName())}
-                      title="Random name"
-                      className="px-3 rounded-xl border-2 border-ink/10 bg-paper hover:border-ink/20 text-ink/70 font-semibold"
-                    >🎲</button>
-                  </div>
+                  <input
+                    value={name}
+                    onChange={(e) => { setName(e.target.value.toLowerCase()); setNameTouched(true); }}
+                    onFocus={(e) => { if (!nameTouched) e.currentTarget.select(); }}
+                    maxLength={24}
+                    placeholder="what should we call you?"
+                    className={`w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors lowercase ${
+                      nameTouched ? 'text-ink' : 'text-ink/40 italic'
+                    }`}
+                  />
+                  {!nameTouched && (
+                    <p className="text-[11px] text-ink/45 mt-1.5 leading-snug">
+                      We picked a random name — tap to edit it.
+                    </p>
+                  )}
                 </Field>
                 <div className="flex gap-2.5 mt-5">
                   <button
@@ -242,9 +275,9 @@ export default function Landing() {
                   >Create</button>
                 </div>
                 <p className="text-[11px] text-ink/55 mt-3 leading-snug">
-                  No account needed. The room name <em>is</em> the link your friends use.
-                  Tip: press <kbd className="px-1 py-0.5 rounded bg-cream border border-ink/10 text-[10px]">Enter</kbd> to join,
-                  {' '}<kbd className="px-1 py-0.5 rounded bg-cream border border-ink/10 text-[10px]">Shift+Enter</kbd> to create.
+                  No account needed. The room name <em>is</em> the link your friends use — pick one,
+                  then <strong>Join</strong> an existing room or <strong>Create</strong> a new one.
+                  We'll confirm before making a brand-new room.
                 </p>
               </>
             ) : (
@@ -349,11 +382,52 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-[13px] text-ink/55">
           <div>© {new Date().getFullYear()} MaherBoard — a visual thinking space.</div>
           <div className="flex items-center gap-4">
-            <a href="#how" className="hover:text-ink">How it works</a>
-            <a href="#features" className="hover:text-ink">Features</a>
+            <a href="#how" onClick={(e) => { e.preventDefault(); smoothScrollTo('how'); }} className="hover:text-ink">How it works</a>
+            <a href="#features" onClick={(e) => { e.preventDefault(); smoothScrollTo('features'); }} className="hover:text-ink">Features</a>
           </div>
         </div>
       </footer>
+
+      {/* Create-room confirmation — friction against accidental throwaway rooms. */}
+      {pendingCreate && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center p-5"
+          style={{ background: 'rgba(26,21,16,0.45)', backdropFilter: 'blur(3px)' }}
+          onClick={() => setPendingCreate(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-[400px] rounded-[22px] border border-ink/10 p-6 animate-fadeUp"
+            style={{ background: '#FDFAF5', boxShadow: '0 24px 60px rgba(26,21,16,0.22)' }}
+          >
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-[20px] font-extrabold mb-4"
+              style={{ background: 'linear-gradient(140deg, #D97435, #E8B830)' }}
+            >+</div>
+            <h3 className="text-[19px] font-extrabold tracking-tight">Create a new room?</h3>
+            <p className="mt-2 text-[14px] text-ink/65 leading-relaxed">
+              No room called <span className="font-bold text-ink">"{pendingCreate}"</span> exists yet.
+              You're about to create a brand-new one. Proceed?
+            </p>
+            <div className="flex gap-2.5 mt-5">
+              <button
+                onClick={confirmCreate}
+                disabled={busy}
+                className="flex-1 py-[12px] rounded-xl text-white font-bold text-[15px] disabled:opacity-50 transition-transform active:scale-[0.99]"
+                style={{
+                  background: 'linear-gradient(135deg, #D97435, #F08848)',
+                  boxShadow: '0 3px 16px rgba(217,116,53,0.40)',
+                }}
+              >Create room →</button>
+              <button
+                onClick={() => setPendingCreate(null)}
+                disabled={busy}
+                className="px-5 py-[12px] rounded-xl text-ink font-semibold text-[14px] disabled:opacity-50 border-2 border-ink/10 bg-paper hover:border-ink/20"
+              >Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

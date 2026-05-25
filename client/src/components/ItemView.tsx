@@ -364,7 +364,7 @@ export default function ItemView({
       {item.type === 'link' && (
         <TextOrLink item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
-      {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
+      {item.type === 'board' && <BoardRefBox item={item} selected={selected} scale={scale} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
       {item.type === 'document' && (
         <DocumentBox item={item} selected={selected} onOpen={() => onOpenDocument?.(item.id)} />
       )}
@@ -1165,15 +1165,14 @@ function ImageBox({
           The counter-scale is clamped so on a tiny image the controls
           don't overflow it, and on a huge image they don't shrink away. */}
       {selected && (() => {
-        // Roughly: keep on-screen UI ~constant via 1/scale, but allow it to
-        // grow on big images (so the AI button isn't a speck on a 2000px
-        // image) and never exceed ~25% of the image's smallest side.
+        // Keep the AI controls at a roughly constant on-screen size by
+        // counter-scaling the canvas zoom (1/scale), exactly like the grip and
+        // resize handles. The only cap is for small images, where we shrink the
+        // cluster so it can't swallow the image it's sitting on.
         const inv = 1 / view.scale;
         const imageMin = Math.min(item.w, item.h);
-        const imageBoost = Math.max(1, Math.min(2.4, imageMin / 220));
-        const raw = inv * imageBoost;
-        const maxByImage = imageMin / 100; // 100 = base button design width-ish
-        const uiScale = Math.max(0.7, Math.min(raw, Math.max(0.7, maxByImage)));
+        const maxByImage = imageMin / 100; // keep the cluster inside the image
+        const uiScale = Math.max(0.5, Math.min(inv, Math.max(0.5, maxByImage)));
         return (
       <div
         className="absolute z-20"
@@ -1683,12 +1682,15 @@ function TextOrLink({
 }
 
 function BoardRefBox({
-  item, selected, onUpdate, onEnterBoard,
-}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void }) {
+  item, selected, scale, onUpdate, onEnterBoard,
+}: { item: BaseItem; selected: boolean; scale: number; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
   const [hov, setHov] = useState(false);
   const highlight = selected;
+  // Counter-scale the overlay buttons so they stay a usable on-screen size at
+  // any canvas zoom, clamped so they don't get absurdly large when zoomed out.
+  const ctrl = Math.max(0.55, Math.min(1 / scale, 2.2));
 
   async function uploadCover(file: File) {
     try {
@@ -1734,6 +1736,8 @@ function BoardRefBox({
             color: selected ? '#fff' : 'rgba(26,21,16,0.45)',
             boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.35)' : 'none',
             lineHeight: 1,
+            transform: `scale(${ctrl})`,
+            transformOrigin: 'bottom right',
           }}
         >→</button>
 
@@ -1755,6 +1759,7 @@ function BoardRefBox({
           onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
           className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-white/90 shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/70 hover:text-ink opacity-0 group-hover:opacity-100"
           title="Set thumbnail"
+          style={{ transform: `scale(${ctrl})`, transformOrigin: 'top right' }}
         ><CameraIcon size={14} /></button>
         <input
           ref={fileRef}
