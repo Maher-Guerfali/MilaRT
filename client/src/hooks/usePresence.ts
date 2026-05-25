@@ -21,10 +21,15 @@ interface UsePresenceResult {
 export function usePresence(
   roomCode: string | undefined,
   identity: Identity | null,
+  boardId: string | undefined,
 ): UsePresenceResult {
   const [peers, setPeers] = useState<Peer[]>([]);
   const [connected, setConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
+  // Latest board, read inside the connect handler so `init` carries the board
+  // the user is actually on without re-creating the socket on every nav.
+  const boardIdRef = useRef<string | undefined>(boardId);
+  boardIdRef.current = boardId;
   // Buffer cursors via a ref so we can flush at most once per animation frame
   // — guards against React state churn from a 30Hz remote-cursor stream.
   const peersRef = useRef<Map<string, Peer>>(new Map());
@@ -50,7 +55,7 @@ export function usePresence(
       setConnected(true);
       socket.emit(
         'init',
-        { roomCode, identity },
+        { roomCode, boardId: boardIdRef.current, identity },
         (resp: { ok?: true; peers?: Peer[]; error?: string }) => {
           if (resp?.error) {
             console.warn('[presence] init rejected:', resp.error);
@@ -68,6 +73,16 @@ export function usePresence(
     socket.on('disconnect', () => {
       setConnected(false);
       peersRef.current.clear();
+      scheduleFlush();
+    });
+
+    // Full peer-list reset — sent after switching boards so the cursor layer
+    // shows exactly who's on the new board (and nobody from the old one).
+    socket.on('presence:state', ({ peers: list }: { peers: Omit<Peer, 'x' | 'y'>[] }) => {
+      peersRef.current.clear();
+      for (const p of list ?? []) {
+        peersRef.current.set(p.id, { ...p, x: null, y: null });
+      }
       scheduleFlush();
     });
 
@@ -98,6 +113,19 @@ export function usePresence(
       setConnected(false);
     };
   }, [roomCode, identity?.id, identity?.name, identity?.color]);
+
+  // Tell the server when we move to a different board so presence re-scopes.
+  // The `init` handler already covers the very first board; this fires on
+  // subsequent navigations without tearing down the socket. Clearing peers
+  // locally avoids a flash of stale cursors before `presence:state` lands.
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+    peersRef.current.clear();
+    scheduleFlush();
+    socket.emit('board', { boardId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardId]);
 
   function sendCursor(x: number, y: number) {
     socketRef.current?.emit('cursor', { x, y });

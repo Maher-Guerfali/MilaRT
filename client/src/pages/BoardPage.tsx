@@ -60,7 +60,7 @@ export default function BoardPage() {
 
   // ── Live presence (other people's cursors in this room) ────────────
   const [identity, setIdentity] = useState<Identity | null>(() => loadIdentity());
-  const { peers, sendCursor } = usePresence(code, identity);
+  const { peers, sendCursor } = usePresence(code, identity, boardId);
   const canvasRef = useRef<CanvasHandle>(null);
 
   // ── AI assistant state ─────────────────────────────────────────────
