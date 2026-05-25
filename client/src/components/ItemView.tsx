@@ -1161,18 +1161,14 @@ function ImageBox({
 
       {/* AI controls live in a single bottom-left anchored layer that
           counter-scales with the canvas zoom so the button and prompt bar
-          stay readable when zoomed out and don't bloat when zoomed in.
-          The counter-scale is clamped so on a tiny image the controls
-          don't overflow it, and on a huge image they don't shrink away. */}
+          keep a constant on-screen size at any zoom level — exactly like the
+          drag grip and resize handles. */}
       {selected && (() => {
-        // Keep the AI controls at a roughly constant on-screen size by
-        // counter-scaling the canvas zoom (1/scale), exactly like the grip and
-        // resize handles. The only cap is for small images, where we shrink the
-        // cluster so it can't swallow the image it's sitting on.
-        const inv = 1 / view.scale;
-        const imageMin = Math.min(item.w, item.h);
-        const maxByImage = imageMin / 100; // keep the cluster inside the image
-        const uiScale = Math.max(0.5, Math.min(inv, Math.max(0.5, maxByImage)));
+        // Pure 1/scale counter-scale → truly constant on-screen size across the
+        // whole zoom range, matching the grip/resize handles. Tying it to the
+        // image size (the old behaviour) made the controls shrink when zoomed
+        // out; clamping bound at the zoom extremes and did the same.
+        const uiScale = 1 / view.scale;
         return (
       <div
         className="absolute z-20"
