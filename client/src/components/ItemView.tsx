@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
 import { api } from '../api';
@@ -15,6 +15,7 @@ interface Props {
   isMergeTarget?: boolean;
   /** True when this board item is the active drop target during a drag. */
   isBoardDropTarget?: boolean;
+  isFresh?: boolean;
   onSelect: (additive: boolean) => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
@@ -22,7 +23,7 @@ interface Props {
   onEnterBoard: () => void;
   onExportBoardHere?: () => void;
   onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
-  onSendToStorage?: (id: string) => void;
+  onSendToStorage?: (id: string) => void | Promise<void>;
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
@@ -50,17 +51,13 @@ function youTubeId(raw: string): string | null {
 
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
-  isMergeTarget, isBoardDropTarget,
+  isMergeTarget, isBoardDropTarget, isFresh,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onExportBoardHere, onMoveLayer,
   onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
   onSetBoardDropTarget, onDropIntoBoard,
 }: Props) {
   const mergeTargetIdRef = useRef<string | null>(null);
   // Per-drag bookkeeping for the board hover-grow feature.
-  // `current` is the board id currently growing (will-drop-inside).
-  // `visited` records boards we've already hovered+left during this drag —
-  // re-entering them doesn't re-trigger the grow, so a slide-back drop
-  // lands ON TOP of the board rather than inside it.
   const boardDropRef = useRef<{ current: string | null; visited: Set<string> }>(
     { current: null, visited: new Set() }
   );
@@ -90,6 +87,8 @@ export default function ItemView({
   // the parent. Resets whenever the item is deselected.
   const [editing, setEditing] = useState(false);
   useEffect(() => { if (!selected) setEditing(false); }, [selected]);
+
+  const [hovered, setHovered] = useState(false);
 
   // Right-click context menu (currently only used for image items).
   // Coordinates are in viewport space — the menu is portalled at fixed pos.
@@ -129,8 +128,6 @@ export default function ItemView({
     return null;
   }
 
-  // Topmost board element under the cursor that isn't part of the dragged
-  // selection — used for the hover-grow / drop-inside behaviour.
   function findBoardTargetAt(clientX: number, clientY: number, excludeIds: string[]): string | null {
     const els = document.elementsFromPoint(clientX, clientY);
     for (const el of els) {
@@ -152,11 +149,11 @@ export default function ItemView({
     // If the item isn't selected yet, just select it — don't start a drag.
     // The user can then press a second time (while selected) to drag.
     if (!wasSelected && mode === 'move') {
-      onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
+      onSelect(e.shiftKey);
       return;
     }
 
-    if (!wasSelected || mode === 'resize') onSelect(e.shiftKey || e.ctrlKey || e.metaKey);
+    if (!wasSelected || mode === 'resize') onSelect(e.shiftKey);
     const dataAny = item.data as { imgFrame?: { x: number; y: number; w: number; h: number } };
     const fr = dataAny.imgFrame;
     dragRef.current = {
@@ -206,27 +203,19 @@ export default function ItemView({
         }
       }
       // Hover-into-board: while dragging anything (except a board onto
-      // itself), the first time we hover a given board element it grows
-      // ("will drop inside"). Sliding away marks that board as visited,
-      // so a subsequent re-entry stays flat and the next release will
-      // drop ON TOP of the board rather than inside it.
+      // itself), the first time we hover a given board element it grows.
       if (d.moved && onSetBoardDropTarget && item.type !== 'board') {
         const excludeIds = selectionIds.length ? selectionIds : [item.id];
         const target = findBoardTargetAt(e.clientX, e.clientY, excludeIds);
         const state = boardDropRef.current;
         if (target) {
           if (state.visited.has(target)) {
-            // Re-entry after sliding away — don't grow.
-            if (state.current !== null) {
-              state.current = null;
-              onSetBoardDropTarget(null);
-            }
+            if (state.current !== null) { state.current = null; onSetBoardDropTarget(null); }
           } else if (state.current !== target) {
             state.current = target;
             onSetBoardDropTarget(target);
           }
         } else if (state.current) {
-          // Just slid off the board — remember it so re-entry won't grow.
           state.visited.add(state.current);
           state.current = null;
           onSetBoardDropTarget(null);
@@ -281,10 +270,10 @@ export default function ItemView({
     // send the item there instead of committing the move.
     let droppedToStorage = false;
     if (d.mode === 'move' && d.moved && onSendToStorage &&
-        (item.type === 'image' || item.type === 'link')) {
+        (item.type === 'image' || item.type === 'link' || item.type === 'board')) {
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       if (el?.closest('[data-storage-drop="true"]')) {
-        onSendToStorage(item.id);
+        void onSendToStorage(item.id);
         droppedToStorage = true;
       }
     }
@@ -301,9 +290,7 @@ export default function ItemView({
     mergeTargetIdRef.current = null;
     onSetMergeTarget?.(null);
 
-    // Drop-into-board: only if we released while the grow effect was
-    // still active (board was hovered for the first time). Sliding away
-    // and back drops on top instead (state.current would be null here).
+    // Drop-into-board: only if we released while the grow effect was still active.
     let droppedIntoBoard = false;
     const boardDrop = boardDropRef.current.current;
     if (!droppedToStorage && !mergedAway && d.mode === 'move' && d.moved &&
@@ -346,7 +333,7 @@ export default function ItemView({
     lastDelta.current = null;
     setGhost(null);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-    if (droppedToStorage || mergedAway || droppedIntoBoard) return;
+    if (droppedToStorage || mergedAway) return;
 
     // Click-to-activate. Only fires when:
     //   - this was a press, not a drag (no movement),
@@ -386,27 +373,38 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
+  // When the canvas is zoomed way out, scale items up to readable size on hover.
+  const hoverScale = (view.scale < 0.55 && hovered && !selected)
+    ? Math.min(1 / view.scale, 6)
+    : 1;
+
   return (
     <div
       data-item
       data-item-id={item.id}
       data-item-type={item.type}
       className={`group absolute${
-        isMergeTarget ? ' animate-mergeGlow' : selected ? ' animate-itemWiggle' : ''
+        isMergeTarget ? ' animate-mergeGlow' :
+        isFresh && !selected ? ' animate-newItemShake' :
+        selected ? ' animate-itemWiggle' : ''
       }`}
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
-        zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
+        zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : (hovered ? (item.z ?? 0) + 9000 : item.z ?? 0),
         filter: !isMergeTarget && selected
           ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))'
           : isBoardDropTarget
             ? 'drop-shadow(0 10px 26px rgba(217,116,53,0.45))'
             : undefined,
-        transform: isBoardDropTarget ? 'scale(1.06)' : undefined,
-        transformOrigin: 'center center',
-        transition: 'transform 160ms cubic-bezier(0.4,0,0.2,1), filter 160ms ease',
+        transform: isBoardDropTarget
+          ? 'scale(1.06)'
+          : hoverScale > 1 ? `scale(${hoverScale.toFixed(3)})` : undefined,
+        transformOrigin: isBoardDropTarget ? 'center center' : 'top left',
+        transition: 'transform 0.15s ease-out',
       }}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         if (!canDragFrom(e.target)) return;
@@ -420,8 +418,11 @@ export default function ItemView({
           const url = (item.data as Partial<ImageData>).url;
           if (!url) return;
         } else if (item.type === 'board') {
-          // Only show board menu if we have something to do.
           if (!onExportBoardHere) return;
+        } else if (item.type === 'link') {
+          const d = item.data as Partial<LinkData>;
+          const txt = (d.title || d.url || '').toString().trim();
+          if (!txt) return;
         } else {
           return;
         }
@@ -509,10 +510,10 @@ export default function ItemView({
               </svg>
             </button>
           )}
-          {(item.type === 'image' || item.type === 'link') && onSendToStorage && (
+          {(item.type === 'image' || item.type === 'link' || item.type === 'board') && onSendToStorage && (
             <button
               onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onSendToStorage(item.id); }}
+              onClick={(e) => { e.stopPropagation(); void onSendToStorage(item.id); }}
               title="Send to storage"
               className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
             >
@@ -590,6 +591,15 @@ export default function ItemView({
           onClose={() => setCtxMenu(null)}
           onEnter={onEnterBoard}
           onExportHere={onExportBoardHere}
+          onDelete={onDelete}
+        />
+      )}
+      {ctxMenu && item.type === 'link' && (
+        <LinkContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          url={((item.data as Partial<LinkData>).title || (item.data as Partial<LinkData>).url || '').toString().trim()}
+          onClose={() => setCtxMenu(null)}
           onDelete={onDelete}
         />
       )}
@@ -908,6 +918,98 @@ function BoardContextMenu({
           key={i}
           onClick={run(it.action)}
           className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] transition-colors"
+          style={it.danger ? { color: '#C0392B' } : undefined}
+        >
+          <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
+          <span className="flex-1">{it.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+function LinkContextMenu({
+  x, y, url, onClose, onDelete,
+}: {
+  x: number; y: number; url: string;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+  const isUrl = /^https?:\/\/\S+$/i.test(url);
+  const ytId = isUrl ? youTubeId(url) : null;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let nx = x, ny = y;
+    if (nx + rect.width + pad > window.innerWidth) nx = window.innerWidth - rect.width - pad;
+    if (ny + rect.height + pad > window.innerHeight) ny = window.innerHeight - rect.height - pad;
+    if (nx !== x || ny !== y) setPos({ x: Math.max(pad, nx), y: Math.max(pad, ny) });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function run(action: () => void | Promise<void>) {
+    return (e: React.MouseEvent) => { e.stopPropagation(); onClose(); void action(); };
+  }
+
+  const copyLinkIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+    </svg>
+  );
+
+  const entries: Array<{ label: string; icon: ReactNode; action: () => void | Promise<void>; danger?: boolean; disabled?: boolean }> = [
+    {
+      label: ytId ? 'Copy YouTube link' : (isUrl ? 'Copy URL' : 'Copy text'),
+      icon: copyLinkIcon,
+      action: async () => { await copyToClipboard(url); },
+      disabled: !url,
+    },
+    ...(isUrl ? [{
+      label: 'Open in new tab',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+      ),
+      action: () => { window.open(url, '_blank', 'noopener,noreferrer'); },
+    }] : []),
+    {
+      label: 'Delete',
+      icon: <TrashIcon size={14} />,
+      action: onDelete,
+      danger: true,
+    },
+  ];
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-no-item-drag
+      onPointerDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+      className="fixed z-[100000] min-w-[180px] py-1 rounded-xl text-[12px] text-ink"
+      style={{
+        left: pos.x, top: pos.y,
+        background: 'rgba(253,250,245,0.98)',
+        border: '1px solid rgba(26,21,16,0.10)',
+        boxShadow: '0 10px 28px rgba(26,21,16,0.18), 0 2px 6px rgba(26,21,16,0.10)',
+        backdropFilter: 'blur(6px)',
+      }}
+    >
+      {entries.map((it, i) => (
+        <button
+          key={i}
+          disabled={it.disabled}
+          onClick={run(it.action)}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
           style={it.danger ? { color: '#C0392B' } : undefined}
         >
           <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
@@ -1269,7 +1371,7 @@ function ImageBox({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); setAiOpen((o) => !o); }}
           title="Edit with AI"
-          className="w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all"
+          className="w-7 h-7 rounded-full flex items-center justify-center shadow-md transition-all opacity-40 hover:opacity-100"
           style={{
             background: aiOpen ? '#D97435' : 'rgba(253,250,245,0.95)',
             color: aiOpen ? 'white' : '#D97435',
@@ -1664,7 +1766,7 @@ async function captureItemWithStrokes(
 
 function AIBrushIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.636 5.636l2.122 2.122M16.243 16.243l2.121 2.121M5.636 18.364l2.122-2.121M16.243 7.757l2.121-2.121" />
     </svg>
@@ -1684,6 +1786,25 @@ function TextOrLink({
   const ytId = isUrl ? youTubeId(txt.trim()) : null;
   const baseFS = d.fontSize ?? 16;
   const fontSize = baseFS * liveTextScale;
+  const [ytCopied, setYtCopied] = useState(false);
+  const isBoldForMeasure = d.bold !== false;
+  const measureRef = useRef<HTMLDivElement>(null);
+
+  // Auto-size plain-text link items to tightly wrap their content.
+  // Only fires when text or font changes — NOT when w/h change — to avoid loops.
+  useLayoutEffect(() => {
+    if (editing || isUrl || !txt.trim()) return;
+    const el = measureRef.current;
+    if (!el) return;
+    const sw = el.scrollWidth;
+    const sh = el.scrollHeight;
+    const newW = Math.min(sw + 4, 520);
+    const newH = sh + 4;
+    if (Math.abs(newW - item.w) > 3 || Math.abs(newH - item.h) > 3) {
+      onUpdate({ w: newW, h: newH });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txt, baseFS, isBoldForMeasure, editing, isUrl]);
 
   if (editing) {
     return (
@@ -1704,7 +1825,7 @@ function TextOrLink({
   if (ytId) {
     return (
       <div
-        className="w-full h-full rounded-2xl overflow-hidden"
+        className="w-full h-full rounded-2xl overflow-hidden relative group/yt"
         style={{
           boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)',
           background: '#000',
@@ -1718,6 +1839,38 @@ function TextOrLink({
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
         />
+        {/* Copy-link button — floats over the top-right of the video on hover */}
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={async (e) => {
+            e.stopPropagation();
+            const ok = await copyToClipboard(txt.trim());
+            if (ok) { setYtCopied(true); setTimeout(() => setYtCopied(false), 1600); }
+          }}
+          className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-all opacity-0 group-hover/yt:opacity-100"
+          style={{
+            background: ytCopied ? 'rgba(60,180,100,0.92)' : 'rgba(26,21,16,0.72)',
+            color: '#fff',
+            backdropFilter: 'blur(4px)',
+            pointerEvents: 'auto',
+          }}
+          title="Copy YouTube link"
+        >
+          {ytCopied ? (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+              Copied!
+            </>
+          ) : (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" /><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+              </svg>
+              Copy link
+            </>
+          )}
+        </button>
       </div>
     );
   }
@@ -1743,18 +1896,41 @@ function TextOrLink({
   const fontWeight = isBold ? 700 : 400;
 
   return (
-    <div
-      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
-      style={{
-        fontSize,
-        fontWeight,
-        lineHeight: 1.45,
-        letterSpacing: '-0.2px',
-        boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
-      }}
-    >
-      {txt || <span className="text-ink/50 italic font-medium">Click to select, click again to type…</span>}
-    </div>
+    <>
+      {/* Hidden measurement div — renders at base font size (no liveTextScale)
+          so we measure the real persisted size, not the transient drag preview. */}
+      <div
+        ref={measureRef}
+        aria-hidden
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: '-9999px',
+          visibility: 'hidden',
+          pointerEvents: 'none',
+          whiteSpace: 'pre-wrap',
+          fontSize: baseFS,
+          fontWeight,
+          lineHeight: 1.45,
+          letterSpacing: '-0.2px',
+          padding: '6px',
+          maxWidth: 520,
+          zIndex: -1,
+        }}
+      >{txt || ' '}</div>
+      <div
+        className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
+        style={{
+          fontSize,
+          fontWeight,
+          lineHeight: 1.45,
+          letterSpacing: '-0.2px',
+          boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
+        }}
+      >
+        {txt || <span className="text-ink/50 italic font-medium">Click to select, click again to type…</span>}
+      </div>
+    </>
   );
 }
 
@@ -1785,10 +1961,10 @@ function BoardRefBox({
         className="w-full flex-1 min-h-0 rounded-[18px] flex items-center justify-center relative overflow-hidden transition-all"
         style={{
           background: '#FDFAF5',
-          border: `2px solid ${highlight ? '#D97435' : hov ? 'rgba(26,21,16,0.32)' : 'rgba(26,21,16,0.22)'}`,
+          border: `2px solid ${highlight ? '#D97435' : hov ? 'rgba(217,116,53,0.65)' : 'rgba(217,116,53,0.30)'}`,
           boxShadow: highlight
             ? '0 0 0 3px rgba(217,116,53,0.19)'
-            : hov ? '0 4px 18px rgba(26,21,16,0.10)' : '0 2px 8px rgba(26,21,16,0.06)',
+            : hov ? '0 4px 18px rgba(217,116,53,0.12)' : '0 2px 8px rgba(26,21,16,0.06)',
         }}
       >
         {d.imageUrl ? (
@@ -1856,11 +2032,34 @@ function BoardRefBox({
   );
 }
 
+function downloadDocAs(title: string, content: string, fmt: 'txt' | 'docx') {
+  let blob: Blob;
+  let filename: string;
+  if (fmt === 'txt') {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = content;
+    blob = new Blob([tmp.innerText], { type: 'text/plain' });
+    filename = `${title}.txt`;
+  } else {
+    // Word-compatible HTML saved as .doc — opens natively in Word/LibreOffice
+    const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>${title}</title></head><body>${content}</body></html>`;
+    blob = new Blob([html], { type: 'application/msword' });
+    filename = `${title}.docx`;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 function DocumentBox({
   item, selected, onOpen,
 }: { item: BaseItem; selected: boolean; onOpen: () => void }) {
   const d = item.data as Partial<DocumentData>;
   const title = d.title || 'Untitled';
+  const [dlOpen, setDlOpen] = useState(false);
+  const content = d.content || '';
+
   return (
     <div
       className="w-full h-full rounded-2xl bg-white flex flex-col overflow-hidden"
@@ -1882,24 +2081,53 @@ function DocumentBox({
       <div
         className="flex-1 mt-1.5 mx-2 mb-2 rounded-md bg-ink/[0.03] px-2 py-1.5 text-[10px] leading-snug text-ink/65 overflow-hidden pointer-events-none"
         style={{ display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical' }}
-        // Sanitised content is produced inside DocumentEditor (mammoth /
-        // controlled execCommand) so rendering it here is safe.
         dangerouslySetInnerHTML={{
-          __html: d.content && d.content.trim()
-            ? d.content
+          __html: content.trim()
+            ? content
             : '<i style="color:rgba(26,21,16,0.35)">Empty — click to open</i>',
         }}
       />
-      <button
-        data-no-item-drag
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); onOpen(); }}
-        className="mb-2 mx-2 h-7 rounded-md text-[10.5px] font-bold transition-colors"
-        style={{
-          background: '#D97435',
-          color: '#fff',
-        }}
-      >Open</button>
+      <div className="mb-2 mx-2 flex gap-1.5 relative">
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="flex-1 h-7 rounded-md text-[10.5px] font-bold transition-colors"
+          style={{ background: '#D97435', color: '#fff' }}
+        >Open</button>
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); setDlOpen((v) => !v); }}
+          title="Download"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-ink/60 hover:text-ink border border-ink/10 bg-ink/[0.03] hover:bg-ink/[0.07] transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+        {dlOpen && (
+          <div
+            className="absolute bottom-full right-0 mb-1 rounded-xl border border-ink/10 bg-white shadow-lg overflow-hidden z-50"
+            style={{ minWidth: 110 }}
+          >
+            <button
+              data-no-item-drag
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); downloadDocAs(title, content, 'txt'); setDlOpen(false); }}
+              className="w-full text-left px-3 py-2 text-[12px] font-semibold hover:bg-ink/[0.05] transition-colors"
+            >.txt — Plain text</button>
+            <button
+              data-no-item-drag
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); downloadDocAs(title, content, 'docx'); setDlOpen(false); }}
+              className="w-full text-left px-3 py-2 text-[12px] font-semibold hover:bg-ink/[0.05] transition-colors"
+            >.docx — Word</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1932,27 +2160,31 @@ function TextFormatButtons({
     onUpdate({ data: { ...d, bold: !isBold } as Record<string, unknown> });
   }
 
-  const btnBase = 'w-[26px] h-[26px] rounded-full shadow ring-1 ring-ink/10 flex items-center justify-center text-[11px] font-bold';
+  const btnBase = 'h-[26px] rounded-full shadow ring-1 ring-ink/10 flex items-center justify-center font-bold transition-colors';
   return (
     <>
       <button
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); setFontSize(fs - 2); }}
-        title="Smaller text"
-        className={`${btnBase} bg-white text-ink`}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs - 3); }}
+        title={`Smaller text (${Math.round(fs - 3)}px)`}
+        className={`${btnBase} w-[26px] bg-white text-ink text-[11px] hover:bg-ink/10`}
       >A−</button>
+      <span
+        onPointerDown={(e) => e.stopPropagation()}
+        className="px-1.5 h-[26px] rounded-full shadow ring-1 ring-ink/10 bg-white flex items-center text-[10px] font-mono text-ink/70 select-none cursor-default"
+        title="Current font size"
+      >{Math.round(fs)}</span>
       <button
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); setFontSize(fs + 2); }}
-        title="Bigger text"
-        className={`${btnBase} bg-white text-ink`}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs + 3); }}
+        title={`Bigger text (${Math.round(fs + 3)}px)`}
+        className={`${btnBase} w-[26px] bg-white text-ink text-[11px] hover:bg-ink/10`}
       >A+</button>
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); toggleBold(); }}
         title={isBold ? 'Remove bold' : 'Bold'}
-        // Inverted colours when active so users can see the toggle state.
-        className={`${btnBase} ${isBold ? 'bg-ink text-paper' : 'bg-white text-ink'}`}
+        className={`${btnBase} w-[26px] text-[13px] ${isBold ? 'bg-ink text-paper' : 'bg-white text-ink hover:bg-ink/10'}`}
         style={{ fontFamily: 'serif' }}
       >B</button>
     </>

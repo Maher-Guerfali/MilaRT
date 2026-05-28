@@ -35,7 +35,7 @@ export default function Tooltip({ label, side = 'right', children }: Props) {
       {children}
       {show && (
         <div
-          className="absolute bg-ink text-paper text-[11px] font-semibold px-2.5 py-1 rounded-lg whitespace-nowrap pointer-events-none z-[300] animate-tooltipIn shadow-lg"
+          className="absolute bg-ink text-paper text-[11px] font-semibold px-2.5 py-1 rounded-lg whitespace-nowrap pointer-events-none z-[9999] animate-tooltipIn shadow-lg"
           style={pos}
         >
           {label}

@@ -39,7 +39,9 @@ export default function Landing() {
   // ── Quick-join state ──────────────────────────────────────────────
   const [tab, setTab] = useState<Tab>('quick');
   const existing = useMemo(() => loadIdentity(), []);
-  const [name, setName] = useState<string>(existing?.name ?? randomName());
+  const [randomDefault, setRandomDefault] = useState<string>(() => existing?.name ?? randomName());
+  const [name, setName] = useState<string>(existing?.name ?? '');
+  const [nameIsCustom, setNameIsCustom] = useState<boolean>(!!existing?.name);
 
   // ── Sign-in state ─────────────────────────────────────────────────
   const [mode, setMode] = useState<Mode>('signin');
@@ -49,7 +51,7 @@ export default function Landing() {
   const trimmedRoom = room.trim();
 
   function persistIdentity() {
-    const n = name.trim() || randomName();
+    const n = name.trim() || randomDefault;
     saveIdentity(n);
   }
 
@@ -200,7 +202,7 @@ export default function Landing() {
                     if (e.shiftKey) handleCreate(); else handleJoin();
                   }
                 }}
-                placeholder="e.g. maher-projects"
+                placeholder="Enter room name"
                 maxLength={30}
                 className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
               />
@@ -212,14 +214,15 @@ export default function Landing() {
                   <div className="flex gap-2">
                     <input
                       value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      onChange={(e) => { setName(e.target.value); setNameIsCustom(true); }}
                       maxLength={24}
-                      placeholder="What should we call you?"
+                      placeholder={randomDefault}
                       className="flex-1 px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
+                      style={{ color: nameIsCustom ? '#1A1510' : 'rgba(26,21,16,0.38)' }}
                     />
                     <button
                       type="button"
-                      onClick={() => setName(randomName())}
+                      onClick={() => { setRandomDefault(randomName()); setName(''); setNameIsCustom(false); }}
                       title="Random name"
                       className="px-3 rounded-xl border-2 border-ink/10 bg-paper hover:border-ink/20 text-ink/70 font-semibold"
                     >🎲</button>
