@@ -50,6 +50,8 @@ export interface CanvasHandle {
   /** Smoothly animate the camera so the given items fit (~70% default) the
    *  viewport. Used by the F shortcut and the per-item focus button. */
   focusOnIds: (ids: string[], opts?: { fit?: number; duration?: number }) => void;
+  /** Capture the current canvas viewport as a PNG data URL using html2canvas. */
+  captureViewport: () => Promise<string>;
 }
 
 const MIN_SCALE = 0.1;
@@ -195,6 +197,18 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     getCenter: centerOfView,
     getViewportWorld: viewportWorld,
     focusOnIds,
+    captureViewport: async () => {
+      const el = wrapRef.current;
+      if (!el) return '';
+      const { default: html2canvas } = await import('html2canvas');
+      const canvas = await html2canvas(el, {
+        backgroundColor: '#F3EDE0',
+        useCORS: true,
+        logging: false,
+        scale: Math.min(window.devicePixelRatio || 1, 2),
+      });
+      return canvas.toDataURL('image/png');
+    },
   }));
 
   // Track wrap size so the mini-map can draw the viewport rect accurately.

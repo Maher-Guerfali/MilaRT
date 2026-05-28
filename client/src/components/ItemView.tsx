@@ -347,8 +347,11 @@ export default function ItemView({
           const url = (item.data as Partial<ImageData>).url;
           if (!url) return;
         } else if (item.type === 'board') {
-          // Only show board menu if we have something to do.
           if (!onExportBoardHere) return;
+        } else if (item.type === 'link') {
+          const d = item.data as Partial<LinkData>;
+          const txt = (d.title || d.url || '').toString().trim();
+          if (!txt) return;
         } else {
           return;
         }
@@ -517,6 +520,15 @@ export default function ItemView({
           onClose={() => setCtxMenu(null)}
           onEnter={onEnterBoard}
           onExportHere={onExportBoardHere}
+          onDelete={onDelete}
+        />
+      )}
+      {ctxMenu && item.type === 'link' && (
+        <LinkContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          url={((item.data as Partial<LinkData>).title || (item.data as Partial<LinkData>).url || '').toString().trim()}
+          onClose={() => setCtxMenu(null)}
           onDelete={onDelete}
         />
       )}
@@ -835,6 +847,98 @@ function BoardContextMenu({
           key={i}
           onClick={run(it.action)}
           className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] transition-colors"
+          style={it.danger ? { color: '#C0392B' } : undefined}
+        >
+          <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
+          <span className="flex-1">{it.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+function LinkContextMenu({
+  x, y, url, onClose, onDelete,
+}: {
+  x: number; y: number; url: string;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+  const isUrl = /^https?:\/\/\S+$/i.test(url);
+  const ytId = isUrl ? youTubeId(url) : null;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let nx = x, ny = y;
+    if (nx + rect.width + pad > window.innerWidth) nx = window.innerWidth - rect.width - pad;
+    if (ny + rect.height + pad > window.innerHeight) ny = window.innerHeight - rect.height - pad;
+    if (nx !== x || ny !== y) setPos({ x: Math.max(pad, nx), y: Math.max(pad, ny) });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function run(action: () => void | Promise<void>) {
+    return (e: React.MouseEvent) => { e.stopPropagation(); onClose(); void action(); };
+  }
+
+  const copyLinkIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+    </svg>
+  );
+
+  const entries: Array<{ label: string; icon: ReactNode; action: () => void | Promise<void>; danger?: boolean; disabled?: boolean }> = [
+    {
+      label: ytId ? 'Copy YouTube link' : (isUrl ? 'Copy URL' : 'Copy text'),
+      icon: copyLinkIcon,
+      action: async () => { await copyToClipboard(url); },
+      disabled: !url,
+    },
+    ...(isUrl ? [{
+      label: 'Open in new tab',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+      ),
+      action: () => { window.open(url, '_blank', 'noopener,noreferrer'); },
+    }] : []),
+    {
+      label: 'Delete',
+      icon: <TrashIcon size={14} />,
+      action: onDelete,
+      danger: true,
+    },
+  ];
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-no-item-drag
+      onPointerDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+      className="fixed z-[100000] min-w-[180px] py-1 rounded-xl text-[12px] text-ink"
+      style={{
+        left: pos.x, top: pos.y,
+        background: 'rgba(253,250,245,0.98)',
+        border: '1px solid rgba(26,21,16,0.10)',
+        boxShadow: '0 10px 28px rgba(26,21,16,0.18), 0 2px 6px rgba(26,21,16,0.10)',
+        backdropFilter: 'blur(6px)',
+      }}
+    >
+      {entries.map((it, i) => (
+        <button
+          key={i}
+          disabled={it.disabled}
+          onClick={run(it.action)}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
           style={it.danger ? { color: '#C0392B' } : undefined}
         >
           <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
@@ -1611,6 +1715,7 @@ function TextOrLink({
   const ytId = isUrl ? youTubeId(txt.trim()) : null;
   const baseFS = d.fontSize ?? 16;
   const fontSize = baseFS * liveTextScale;
+  const [ytCopied, setYtCopied] = useState(false);
 
   if (editing) {
     return (
@@ -1631,7 +1736,7 @@ function TextOrLink({
   if (ytId) {
     return (
       <div
-        className="w-full h-full rounded-2xl overflow-hidden"
+        className="w-full h-full rounded-2xl overflow-hidden relative group/yt"
         style={{
           boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)',
           background: '#000',
@@ -1645,6 +1750,38 @@ function TextOrLink({
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
         />
+        {/* Copy-link button — floats over the top-right of the video on hover */}
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={async (e) => {
+            e.stopPropagation();
+            const ok = await copyToClipboard(txt.trim());
+            if (ok) { setYtCopied(true); setTimeout(() => setYtCopied(false), 1600); }
+          }}
+          className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-all opacity-0 group-hover/yt:opacity-100"
+          style={{
+            background: ytCopied ? 'rgba(60,180,100,0.92)' : 'rgba(26,21,16,0.72)',
+            color: '#fff',
+            backdropFilter: 'blur(4px)',
+            pointerEvents: 'auto',
+          }}
+          title="Copy YouTube link"
+        >
+          {ytCopied ? (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+              Copied!
+            </>
+          ) : (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" /><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+              </svg>
+              Copy link
+            </>
+          )}
+        </button>
       </div>
     );
   }

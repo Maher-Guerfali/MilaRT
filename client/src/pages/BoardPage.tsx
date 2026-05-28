@@ -213,6 +213,30 @@ export default function BoardPage() {
     return () => clearTimeout(t);
   }, [items, strokes, name, board]);
 
+  async function handleExport(fmt: 'png' | 'json') {
+    if (fmt === 'png') {
+      try {
+        const dataUrl = await canvasRef.current?.captureViewport();
+        if (!dataUrl) { alert('Could not capture canvas.'); return; }
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `board-${code || 'export'}.png`;
+        a.click();
+      } catch {
+        alert('PNG export failed — try JSON instead.');
+      }
+    } else {
+      const data = JSON.stringify({ items, strokes }, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `board-${code || 'export'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }
+
   function addItem(item: BaseItem) {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
     markFreshItem(item.id);
@@ -491,6 +515,7 @@ export default function BoardPage() {
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenTutorial={() => setTutorialOpen(true)}
         onOpenCameraScan={() => setCameraScanOpen(true)}
+        onExport={handleExport}
         saving={saving}
         isDrawMode={!isMove && drawOpen}
         onActivateMove={activateMove}
