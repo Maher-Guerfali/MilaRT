@@ -54,9 +54,9 @@ export interface CanvasHandle {
   captureViewport: () => Promise<string>;
 }
 
-const MIN_SCALE = 0.1;
-const MAX_SCALE = 4;
-const ZOOM_STEP = 1.45;
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 12;
+const ZOOM_STEP = 1.20;
 const SIZE_TO_PX: Record<SizeKey, number> = { sm: 2, md: 4, lg: 8 };
 
 function clampScale(s: number) {

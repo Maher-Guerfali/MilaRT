@@ -176,6 +176,21 @@ export default function BoardPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-fit all items into view when a board first loads.
+  // Uses a ref to prevent re-triggering on incremental item edits.
+  const autoFitBoardRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!board || items.length === 0) return;
+    const boardKey = board._id;
+    if (autoFitBoardRef.current === boardKey) return;
+    autoFitBoardRef.current = boardKey;
+    // Give Canvas one frame to mount and measure its viewport size.
+    const t = setTimeout(() => {
+      canvasRef.current?.focusOnIds(items.map((it) => it.id), { fit: 0.80, duration: 0 });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [board, items]);
+
   // Show tutorial on very first visit
   useEffect(() => {
     try {
