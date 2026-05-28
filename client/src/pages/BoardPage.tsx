@@ -63,6 +63,19 @@ export default function BoardPage() {
   const { peers, sendCursor } = usePresence(code, identity);
   const canvasRef = useRef<CanvasHandle>(null);
 
+  const [freshItemId, setFreshItemId] = useState<string | null>(null);
+  const freshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function markFreshItem(id: string) {
+    if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+    setFreshItemId(id);
+    freshTimerRef.current = setTimeout(() => setFreshItemId(null), 8000);
+  }
+  function clearFreshItem() {
+    if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+    setFreshItemId(null);
+  }
+
   // ── AI assistant state ─────────────────────────────────────────────
   const [aiLoading, setAiLoading] = useState(false);
   const [aiPreview, setAiPreview] = useState<{
@@ -202,6 +215,7 @@ export default function BoardPage() {
 
   function addItem(item: BaseItem) {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
+    markFreshItem(item.id);
   }
   function addItemAtCenter(template: Omit<BaseItem, 'x' | 'y'>) {
     const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
@@ -555,6 +569,8 @@ export default function BoardPage() {
           onRestoreFromStorageAt={restoreFromStorageAt}
           onMerge={mergeItems}
           onOpenDocument={setOpenDocumentId}
+          freshItemId={freshItemId}
+          onClearFresh={clearFreshItem}
           peers={peers}
           onLocalCursorMove={sendCursor}
         />

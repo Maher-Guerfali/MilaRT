@@ -34,6 +34,8 @@ interface Props {
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  freshItemId?: string | null;
+  onClearFresh?: (id: string) => void;
   /** Remote peers' cursors (rendered as an overlay). */
   peers?: Peer[];
   /** Called with the local cursor's world coords. Internally throttled. */
@@ -74,6 +76,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
     onExportBoardHere,
     onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument,
+    freshItemId, onClearFresh,
     peers, onLocalCursorMove,
   } = props;
 
@@ -561,8 +564,12 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             strokes={strokes}
             view={view}
             isMergeTarget={mergeTargetId === it.id}
+            isFresh={freshItemId === it.id}
             onSelect={(additive) => selectItem(it.id, additive)}
-            onUpdate={(patch) => onUpdate(it.id, patch)}
+            onUpdate={(patch) => {
+              onUpdate(it.id, patch);
+              if (freshItemId === it.id) onClearFresh?.(it.id);
+            }}
             onMoveGroup={moveGroup}
             onDelete={() => onDelete(it.id)}
             onEnterBoard={() => onEnterBoard(it.id)}

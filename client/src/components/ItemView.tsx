@@ -13,6 +13,7 @@ interface Props {
   strokes: Stroke[];
   view: { x: number; y: number; scale: number };
   isMergeTarget?: boolean;
+  isFresh?: boolean;
   onSelect: (additive: boolean) => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
@@ -44,7 +45,7 @@ function youTubeId(raw: string): string | null {
 
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
-  isMergeTarget,
+  isMergeTarget, isFresh,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onExportBoardHere, onMoveLayer,
   onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
 }: Props) {
@@ -321,7 +322,9 @@ export default function ItemView({
       data-item-id={item.id}
       data-item-type={item.type}
       className={`group absolute${
-        isMergeTarget ? ' animate-mergeGlow' : selected ? ' animate-itemWiggle' : ''
+        isMergeTarget ? ' animate-mergeGlow' :
+        isFresh && !selected ? ' animate-newItemShake' :
+        selected ? ' animate-itemWiggle' : ''
       }`}
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
@@ -1780,11 +1783,34 @@ function BoardRefBox({
   );
 }
 
+function downloadDocAs(title: string, content: string, fmt: 'txt' | 'docx') {
+  let blob: Blob;
+  let filename: string;
+  if (fmt === 'txt') {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = content;
+    blob = new Blob([tmp.innerText], { type: 'text/plain' });
+    filename = `${title}.txt`;
+  } else {
+    // Word-compatible HTML saved as .doc — opens natively in Word/LibreOffice
+    const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>${title}</title></head><body>${content}</body></html>`;
+    blob = new Blob([html], { type: 'application/msword' });
+    filename = `${title}.docx`;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 function DocumentBox({
   item, selected, onOpen,
 }: { item: BaseItem; selected: boolean; onOpen: () => void }) {
   const d = item.data as Partial<DocumentData>;
   const title = d.title || 'Untitled';
+  const [dlOpen, setDlOpen] = useState(false);
+  const content = d.content || '';
+
   return (
     <div
       className="w-full h-full rounded-2xl bg-white flex flex-col overflow-hidden"
@@ -1806,24 +1832,53 @@ function DocumentBox({
       <div
         className="flex-1 mt-1.5 mx-2 mb-2 rounded-md bg-ink/[0.03] px-2 py-1.5 text-[10px] leading-snug text-ink/65 overflow-hidden pointer-events-none"
         style={{ display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical' }}
-        // Sanitised content is produced inside DocumentEditor (mammoth /
-        // controlled execCommand) so rendering it here is safe.
         dangerouslySetInnerHTML={{
-          __html: d.content && d.content.trim()
-            ? d.content
+          __html: content.trim()
+            ? content
             : '<i style="color:rgba(26,21,16,0.35)">Empty — click to open</i>',
         }}
       />
-      <button
-        data-no-item-drag
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); onOpen(); }}
-        className="mb-2 mx-2 h-7 rounded-md text-[10.5px] font-bold transition-colors"
-        style={{
-          background: '#D97435',
-          color: '#fff',
-        }}
-      >Open</button>
+      <div className="mb-2 mx-2 flex gap-1.5 relative">
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="flex-1 h-7 rounded-md text-[10.5px] font-bold transition-colors"
+          style={{ background: '#D97435', color: '#fff' }}
+        >Open</button>
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); setDlOpen((v) => !v); }}
+          title="Download"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-ink/60 hover:text-ink border border-ink/10 bg-ink/[0.03] hover:bg-ink/[0.07] transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+        {dlOpen && (
+          <div
+            className="absolute bottom-full right-0 mb-1 rounded-xl border border-ink/10 bg-white shadow-lg overflow-hidden z-50"
+            style={{ minWidth: 110 }}
+          >
+            <button
+              data-no-item-drag
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); downloadDocAs(title, content, 'txt'); setDlOpen(false); }}
+              className="w-full text-left px-3 py-2 text-[12px] font-semibold hover:bg-ink/[0.05] transition-colors"
+            >.txt — Plain text</button>
+            <button
+              data-no-item-drag
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); downloadDocAs(title, content, 'docx'); setDlOpen(false); }}
+              className="w-full text-left px-3 py-2 text-[12px] font-semibold hover:bg-ink/[0.05] transition-colors"
+            >.docx — Word</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
