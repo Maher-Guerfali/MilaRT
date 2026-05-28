@@ -307,22 +307,63 @@ export default function BoardPage() {
     return () => clearTimeout(t);
   }, [storedItems, code]);
 
-  function sendToStorage(id: string) {
+  async function sendToStorage(id: string) {
     const it = items.find((x) => x.id === id);
     if (!it) return;
-    // Drop any per-board flags before storing (e.g. legacy stored:true)
-    // so the item is portable across boards.
     const data = { ...(it.data as Record<string, unknown>) };
     delete data.stored;
+
+    // For board items: snapshot the board's content so it can be fully restored later.
+    if (it.type === 'board' && code) {
+      const boardId = (it.data as Partial<BoardRefData>).boardId;
+      if (boardId) {
+        try {
+          const boardData = await api.getBoard(boardId);
+          data.boardSnapshot = {
+            items: boardData.items,
+            strokes: boardData.strokes || [],
+            name: boardData.name,
+          };
+        } catch { /* store without snapshot if fetch fails */ }
+      }
+    }
+
     const portable: BaseItem = { ...it, data };
     setItems((xs) => xs.filter((x) => x.id !== id));
     setStoredItems((s) => [portable, ...s.filter((p) => p.id !== id)]);
   }
 
   // cx,cy is the world position the item should be centred on.
-  function restoreFromStorageAt(id: string, cx: number, cy: number) {
+  async function restoreFromStorageAt(id: string, cx: number, cy: number) {
     const it = storedItems.find((p) => p.id === id);
     if (!it) return;
+
+    // Board items: create a fresh board on the server, populate with the stored snapshot.
+    if (it.type === 'board' && code && board) {
+      const d = it.data as Partial<BoardRefData> & { boardSnapshot?: { items: BaseItem[]; strokes: Stroke[]; name: string } };
+      try {
+        const nested = await api.createNestedBoard(code, board._id, d.name || 'Untitled');
+        if (d.boardSnapshot?.items?.length) {
+          await api.saveBoard(nested._id, d.boardSnapshot.items, d.boardSnapshot.strokes || [], d.boardSnapshot.name || d.name || 'Untitled');
+        }
+        const newData: Record<string, unknown> = { ...(d as Record<string, unknown>), boardId: nested._id };
+        delete newData.boardSnapshot;
+        const restoredItem: BaseItem = {
+          ...it,
+          id: nanoid(10),
+          data: newData,
+          x: cx - it.w / 2,
+          y: cy - it.h / 2,
+          z: items.length,
+        };
+        setStoredItems((s) => s.filter((p) => p.id !== id));
+        setItems((xs) => [...xs, restoredItem]);
+      } catch (e) {
+        alert('Could not restore board: ' + (e as Error).message);
+      }
+      return;
+    }
+
     setStoredItems((s) => s.filter((p) => p.id !== id));
     setItems((xs) => [
       ...xs,
@@ -331,7 +372,7 @@ export default function BoardPage() {
   }
   function restoreFromStorageCenter(id: string) {
     const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
-    restoreFromStorageAt(id, c.x, c.y);
+    void restoreFromStorageAt(id, c.x, c.y);
   }
   function deleteFromStorage(id: string) {
     setStoredItems((s) => s.filter((p) => p.id !== id));

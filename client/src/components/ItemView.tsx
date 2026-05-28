@@ -21,7 +21,7 @@ interface Props {
   onEnterBoard: () => void;
   onExportBoardHere?: () => void;
   onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
-  onSendToStorage?: (id: string) => void;
+  onSendToStorage?: (id: string) => void | Promise<void>;
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
@@ -225,10 +225,10 @@ export default function ItemView({
     // send the item there instead of committing the move.
     let droppedToStorage = false;
     if (d.mode === 'move' && d.moved && onSendToStorage &&
-        (item.type === 'image' || item.type === 'link')) {
+        (item.type === 'image' || item.type === 'link' || item.type === 'board')) {
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       if (el?.closest('[data-storage-drop="true"]')) {
-        onSendToStorage(item.id);
+        void onSendToStorage(item.id);
         droppedToStorage = true;
       }
     }
@@ -439,10 +439,10 @@ export default function ItemView({
               </svg>
             </button>
           )}
-          {(item.type === 'image' || item.type === 'link') && onSendToStorage && (
+          {(item.type === 'image' || item.type === 'link' || item.type === 'board') && onSendToStorage && (
             <button
               onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onSendToStorage(item.id); }}
+              onClick={(e) => { e.stopPropagation(); void onSendToStorage(item.id); }}
               title="Send to storage"
               className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
             >

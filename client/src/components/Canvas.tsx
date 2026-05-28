@@ -30,7 +30,7 @@ interface Props {
   onMoveLayer: (id: string, dir: 'forward' | 'backward') => void;
   onEnterBoard: (itemId: string) => void;
   onExportBoardHere?: (itemId: string) => void;
-  onSendToStorage?: (id: string) => void;
+  onSendToStorage?: (id: string) => void | Promise<void>;
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
