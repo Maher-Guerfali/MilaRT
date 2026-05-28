@@ -92,6 +92,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
   const [lassoActive, setLassoActive] = useState(false);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
+  const pinchingRef = useRef(false);
   // Cancels any focus animation in flight so a new F-press doesn't fight a
   // previous one mid-flight.
   const focusAnimRef = useRef<number | null>(null);
@@ -242,6 +243,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     let cy = 0;
     function start(e: TouchEvent) {
       if (e.touches.length !== 2) return;
+      // Signal panning logic to stay off — touchstart fires before pointerdown
+      // on iOS so this flag is set before onBgPointerDown runs.
+      pinchingRef.current = true;
+      panStart.current = null;
       const t1 = e.touches[0], t2 = e.touches[1];
       startDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
       cx = (t1.clientX + t2.clientX) / 2;
@@ -262,7 +267,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       e.preventDefault();
     }
     function end(e: TouchEvent) {
-      if (e.touches.length < 2) active = false;
+      if (e.touches.length < 2) {
+        active = false;
+        pinchingRef.current = false;
+      }
     }
     el.addEventListener('touchstart', start, { passive: false });
     el.addEventListener('touchmove', move, { passive: false });
@@ -302,6 +310,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   function onBgPointerDown(e: React.PointerEvent) {
     if (drawOpen && drawTool !== 'select') return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
+    // On iPad, two-finger pinch fires touchstart (→ sets pinchingRef) before
+    // the first finger's pointerdown. Bail out so pan and pinch don't fight.
+    if (pinchingRef.current) return;
 
     if (inSelectMode) {
       e.currentTarget.setPointerCapture(e.pointerId);

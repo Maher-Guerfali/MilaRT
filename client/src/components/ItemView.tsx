@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
 import { api } from '../api';
@@ -76,6 +76,8 @@ export default function ItemView({
   // the parent. Resets whenever the item is deselected.
   const [editing, setEditing] = useState(false);
   useEffect(() => { if (!selected) setEditing(false); }, [selected]);
+
+  const [hovered, setHovered] = useState(false);
 
   // Right-click context menu (currently only used for image items).
   // Coordinates are in viewport space — the menu is portalled at fixed pos.
@@ -316,6 +318,11 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
+  // When the canvas is zoomed way out, scale items up to readable size on hover.
+  const hoverScale = (view.scale < 0.55 && hovered && !selected)
+    ? Math.min(1 / view.scale, 6)
+    : 1;
+
   return (
     <div
       data-item
@@ -329,11 +336,16 @@ export default function ItemView({
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
-        zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
+        zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : (hovered ? (item.z ?? 0) + 9000 : item.z ?? 0),
         filter: !isMergeTarget && selected
           ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))'
           : undefined,
+        transform: hoverScale > 1 ? `scale(${hoverScale.toFixed(3)})` : undefined,
+        transformOrigin: 'top left',
+        transition: 'transform 0.15s ease-out',
       }}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         if (!canDragFrom(e.target)) return;
@@ -1300,7 +1312,7 @@ function ImageBox({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); setAiOpen((o) => !o); }}
           title="Edit with AI"
-          className="w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all"
+          className="w-7 h-7 rounded-full flex items-center justify-center shadow-md transition-all opacity-40 hover:opacity-100"
           style={{
             background: aiOpen ? '#D97435' : 'rgba(253,250,245,0.95)',
             color: aiOpen ? 'white' : '#D97435',
@@ -1695,7 +1707,7 @@ async function captureItemWithStrokes(
 
 function AIBrushIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.636 5.636l2.122 2.122M16.243 16.243l2.121 2.121M5.636 18.364l2.122-2.121M16.243 7.757l2.121-2.121" />
     </svg>
@@ -1716,6 +1728,24 @@ function TextOrLink({
   const baseFS = d.fontSize ?? 16;
   const fontSize = baseFS * liveTextScale;
   const [ytCopied, setYtCopied] = useState(false);
+  const isBoldForMeasure = d.bold !== false;
+  const measureRef = useRef<HTMLDivElement>(null);
+
+  // Auto-size plain-text link items to tightly wrap their content.
+  // Only fires when text or font changes — NOT when w/h change — to avoid loops.
+  useLayoutEffect(() => {
+    if (editing || isUrl || !txt.trim()) return;
+    const el = measureRef.current;
+    if (!el) return;
+    const sw = el.scrollWidth;
+    const sh = el.scrollHeight;
+    const newW = Math.min(sw + 4, 520);
+    const newH = sh + 4;
+    if (Math.abs(newW - item.w) > 3 || Math.abs(newH - item.h) > 3) {
+      onUpdate({ w: newW, h: newH });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txt, baseFS, isBoldForMeasure, editing, isUrl]);
 
   if (editing) {
     return (
@@ -1807,18 +1837,41 @@ function TextOrLink({
   const fontWeight = isBold ? 700 : 400;
 
   return (
-    <div
-      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
-      style={{
-        fontSize,
-        fontWeight,
-        lineHeight: 1.45,
-        letterSpacing: '-0.2px',
-        boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
-      }}
-    >
-      {txt || <span className="text-ink/50 italic font-medium">Click to select, click again to type…</span>}
-    </div>
+    <>
+      {/* Hidden measurement div — renders at base font size (no liveTextScale)
+          so we measure the real persisted size, not the transient drag preview. */}
+      <div
+        ref={measureRef}
+        aria-hidden
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: '-9999px',
+          visibility: 'hidden',
+          pointerEvents: 'none',
+          whiteSpace: 'pre-wrap',
+          fontSize: baseFS,
+          fontWeight,
+          lineHeight: 1.45,
+          letterSpacing: '-0.2px',
+          padding: '6px',
+          maxWidth: 520,
+          zIndex: -1,
+        }}
+      >{txt || ' '}</div>
+      <div
+        className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
+        style={{
+          fontSize,
+          fontWeight,
+          lineHeight: 1.45,
+          letterSpacing: '-0.2px',
+          boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
+        }}
+      >
+        {txt || <span className="text-ink/50 italic font-medium">Click to select, click again to type…</span>}
+      </div>
+    </>
   );
 }
 
@@ -2048,27 +2101,31 @@ function TextFormatButtons({
     onUpdate({ data: { ...d, bold: !isBold } as Record<string, unknown> });
   }
 
-  const btnBase = 'w-[26px] h-[26px] rounded-full shadow ring-1 ring-ink/10 flex items-center justify-center text-[11px] font-bold';
+  const btnBase = 'h-[26px] rounded-full shadow ring-1 ring-ink/10 flex items-center justify-center font-bold transition-colors';
   return (
     <>
       <button
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); setFontSize(fs - 2); }}
-        title="Smaller text"
-        className={`${btnBase} bg-white text-ink`}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs - 3); }}
+        title={`Smaller text (${Math.round(fs - 3)}px)`}
+        className={`${btnBase} w-[26px] bg-white text-ink text-[11px] hover:bg-ink/10`}
       >A−</button>
+      <span
+        onPointerDown={(e) => e.stopPropagation()}
+        className="px-1.5 h-[26px] rounded-full shadow ring-1 ring-ink/10 bg-white flex items-center text-[10px] font-mono text-ink/70 select-none cursor-default"
+        title="Current font size"
+      >{Math.round(fs)}</span>
       <button
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); setFontSize(fs + 2); }}
-        title="Bigger text"
-        className={`${btnBase} bg-white text-ink`}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs + 3); }}
+        title={`Bigger text (${Math.round(fs + 3)}px)`}
+        className={`${btnBase} w-[26px] bg-white text-ink text-[11px] hover:bg-ink/10`}
       >A+</button>
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); toggleBold(); }}
         title={isBold ? 'Remove bold' : 'Bold'}
-        // Inverted colours when active so users can see the toggle state.
-        className={`${btnBase} ${isBold ? 'bg-ink text-paper' : 'bg-white text-ink'}`}
+        className={`${btnBase} w-[26px] text-[13px] ${isBold ? 'bg-ink text-paper' : 'bg-white text-ink hover:bg-ink/10'}`}
         style={{ fontFamily: 'serif' }}
       >B</button>
     </>
