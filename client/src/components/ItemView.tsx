@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
+import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, PDFData, Stroke } from '../types';
 import { api } from '../api';
 import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon } from './icons';
 
@@ -270,7 +270,7 @@ export default function ItemView({
     // send the item there instead of committing the move.
     let droppedToStorage = false;
     if (d.mode === 'move' && d.moved && onSendToStorage &&
-        (item.type === 'image' || item.type === 'link' || item.type === 'board')) {
+        (item.type === 'image' || item.type === 'link' || item.type === 'board' || item.type === 'pdf')) {
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       if (el?.closest('[data-storage-drop="true"]')) {
         void onSendToStorage(item.id);
@@ -445,6 +445,9 @@ export default function ItemView({
       {item.type === 'document' && (
         <DocumentBox item={item} selected={selected} onOpen={() => onOpenDocument?.(item.id)} />
       )}
+      {item.type === 'pdf' && (
+        <PDFBox item={item} selected={selected} />
+      )}
 
       {/* Drag grip — fixed screen size even while the canvas is zoomed.
           Hidden in image-extend mode where the TL corner is a resize handle. */}
@@ -510,7 +513,7 @@ export default function ItemView({
               </svg>
             </button>
           )}
-          {(item.type === 'image' || item.type === 'link' || item.type === 'board') && onSendToStorage && (
+          {(item.type === 'image' || item.type === 'link' || item.type === 'board' || item.type === 'pdf') && onSendToStorage && (
             <button
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); void onSendToStorage(item.id); }}
@@ -2188,5 +2191,108 @@ function TextFormatButtons({
         style={{ fontFamily: 'serif' }}
       >B</button>
     </>
+  );
+}
+
+// ── PDFBox ─────────────────────────────────────────────────────────────────
+function PDFBox({ item, selected }: { item: BaseItem; selected: boolean }) {
+  const d = item.data as Partial<PDFData>;
+  const url = d.url || '';
+  const name = d.name || 'document.pdf';
+  const size = d.size;
+
+  function formatSize(bytes?: number) {
+    if (!bytes) return null;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function openPDF() {
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  function downloadPDF(e: React.MouseEvent) {
+    e.stopPropagation();
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.target = '_blank'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  return (
+    <div
+      className="w-full h-full rounded-2xl overflow-hidden flex flex-col select-none"
+      style={{
+        background: '#fff',
+        border: `1.5px solid ${selected ? '#D97435' : 'rgba(26,21,16,0.12)'}`,
+        boxShadow: selected
+          ? '0 0 0 2px rgba(217,116,53,0.25), 0 4px 12px rgba(26,21,16,0.10)'
+          : '0 1px 4px rgba(26,21,16,0.08)',
+      }}
+    >
+      {/* Header strip */}
+      <div
+        className="flex items-center gap-2 px-3 py-2 shrink-0"
+        style={{ background: 'rgba(220,38,38,0.07)', borderBottom: '1px solid rgba(220,38,38,0.12)' }}
+      >
+        <PDFFileIcon />
+        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">PDF</span>
+      </div>
+
+      {/* File info — clicking opens the PDF */}
+      <div
+        className="flex-1 flex flex-col justify-center px-3 py-2 min-h-0 cursor-pointer hover:bg-ink/[0.03] transition-colors"
+        data-no-item-drag
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={openPDF}
+        title={`Open ${name}`}
+      >
+        <div className="text-[11.5px] font-semibold text-ink leading-snug line-clamp-2 break-all">{name}</div>
+        {size && <div className="text-[9.5px] text-ink/45 mt-0.5">{formatSize(size)}</div>}
+      </div>
+
+      {/* Action row */}
+      <div className="px-2.5 pb-2.5 flex gap-1.5 shrink-0">
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={openPDF}
+          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors hover:opacity-80"
+          style={{ background: 'rgba(220,38,38,0.09)', color: '#dc2626' }}
+          title="Open in browser"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+          Open
+        </button>
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={downloadPDF}
+          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors hover:bg-ink/10"
+          style={{ background: 'rgba(26,21,16,0.05)', color: '#1A1510' }}
+          title="Download"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PDFFileIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+      <line x1="9" y1="17" x2="15" y2="17" />
+      <line x1="9" y1="9" x2="11" y2="9" />
+    </svg>
   );
 }

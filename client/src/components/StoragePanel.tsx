@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import type { BaseItem, ImageData, LinkData, BoardRefData } from '../types';
+import type { BaseItem, ImageData, LinkData, BoardRefData, PDFData } from '../types';
 import { LinkIcon, TrashIcon, BoardIcon } from './icons';
 
 interface Props {
@@ -84,7 +84,7 @@ export default function StoragePanel({ items, onRestoreToCanvasCenter, onDelete 
           {items.length === 0 && (
             <div className="col-span-2 text-center text-[10.5px] text-ink/45 py-8 px-3 leading-relaxed">
               <div className="mb-2 text-[18px]">📦</div>
-              Drag images, links or boards here<br />
+              Drag images, PDFs, links or boards here<br />
               to keep them off the canvas.
               <div className="mt-3 text-[9.5px] text-ink/30 leading-relaxed">
                 Click a card to send it back<br />
@@ -168,9 +168,11 @@ function StorageCardMenu({
 
   const isImage = item.type === 'image';
   const isBoard = item.type === 'board';
+  const isPDF = item.type === 'pdf';
   const imgUrl = isImage ? (item.data as Partial<ImageData>).url : null;
-  const linkUrl = !isImage && !isBoard ? ((item.data as Partial<LinkData>).url || (item.data as Partial<LinkData>).title || '') : null;
+  const linkUrl = !isImage && !isBoard && !isPDF ? ((item.data as Partial<LinkData>).url || (item.data as Partial<LinkData>).title || '') : null;
   const boardData = isBoard ? item.data as (Partial<BoardRefData> & { boardSnapshot?: { items: BaseItem[]; strokes: unknown[]; name: string } }) : null;
+  const pdfData = isPDF ? item.data as Partial<PDFData> : null;
 
   const menuItems: Array<{ label: string; icon: React.ReactNode; action: () => void; danger?: boolean }> = [
     ...(isImage && imgUrl ? [{
@@ -190,6 +192,15 @@ function StorageCardMenu({
       label: 'Copy URL',
       icon: <LinkIcon size={13} />,
       action: () => { void navigator.clipboard?.writeText(linkUrl); },
+    }] : []),
+    ...(isPDF && pdfData?.url ? [{
+      label: 'Open PDF',
+      icon: <ExternalIcon />,
+      action: () => { window.open(pdfData.url, '_blank', 'noopener,noreferrer'); },
+    }, {
+      label: 'Download PDF',
+      icon: <DownIcon />,
+      action: () => { void downloadFileFromUrl(pdfData.url!, pdfData.name || 'document.pdf'); },
     }] : []),
     ...(isBoard ? [{
       label: 'Export board as JSON',
@@ -254,13 +265,15 @@ function StorageCard({
 
   const isImage = item.type === 'image';
   const isBoard = item.type === 'board';
+  const isPDF = item.type === 'pdf';
   const imgUrl = isImage ? (item.data as Partial<ImageData>).url : null;
-  const link = !isImage && !isBoard ? (item.data as Partial<LinkData>) : null;
+  const link = !isImage && !isBoard && !isPDF ? (item.data as Partial<LinkData>) : null;
   const linkText = link?.title || link?.url || 'Untitled';
   const boardData = isBoard
     ? item.data as (Partial<BoardRefData> & { boardSnapshot?: { items: BaseItem[]; strokes: unknown[]; name: string } })
     : null;
   const boardItemCount = boardData?.boardSnapshot?.items?.length ?? null;
+  const pdfData = isPDF ? item.data as Partial<PDFData> : null;
 
   return (
     <>
@@ -275,7 +288,7 @@ function StorageCard({
         }}
         title="Click to restore to canvas — or drag onto the canvas. Right-click to export."
         className="group relative rounded-xl overflow-hidden bg-white ring-1 ring-ink/10 hover:ring-amber/60 hover:shadow-md transition-all cursor-grab active:cursor-grabbing"
-        style={{ aspectRatio: isImage ? '1' : 'auto' }}
+        style={{ aspectRatio: isImage ? '1' : 'auto', minHeight: isPDF ? 64 : undefined }}
       >
         {/* Image */}
         {isImage && imgUrl && (
@@ -320,10 +333,36 @@ function StorageCard({
           </div>
         )}
 
+        {/* PDF */}
+        {isPDF && (
+          <div className="w-full p-2.5 flex items-start gap-2 min-h-[58px]">
+            <span className="mt-0.5 shrink-0">
+              <StoragePDFIcon />
+            </span>
+            <div>
+              <div className="text-[11px] font-bold text-ink leading-tight line-clamp-2">
+                {pdfData?.name || 'document.pdf'}
+              </div>
+              {pdfData?.size && (
+                <div className="text-[9.5px] text-ink/45 mt-0.5">
+                  {pdfData.size < 1048576
+                    ? `${(pdfData.size / 1024).toFixed(0)} KB`
+                    : `${(pdfData.size / 1048576).toFixed(1)} MB`}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Type badge */}
         {isBoard && (
           <div className="absolute top-1.5 right-6 text-[8px] font-bold uppercase tracking-wide text-amber/70 bg-amber/10 px-1 py-0.5 rounded">
             Board
+          </div>
+        )}
+        {isPDF && (
+          <div className="absolute top-1.5 right-6 text-[8px] font-bold uppercase tracking-wide text-red-700/70 bg-red-50 px-1 py-0.5 rounded">
+            PDF
           </div>
         )}
 
@@ -367,6 +406,17 @@ function ExternalIcon() {
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
       <polyline points="15 3 21 3 21 9" />
       <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
+function StoragePDFIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+      <line x1="9" y1="17" x2="15" y2="17" />
     </svg>
   );
 }

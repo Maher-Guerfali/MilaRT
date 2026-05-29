@@ -425,6 +425,19 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     });
   }
 
+  function placePDFNow(url: string, name: string, size: number, cx: number, cy: number) {
+    onAdd({
+      id: nanoid(10),
+      type: 'pdf',
+      x: cx - 110,
+      y: cy - 72,
+      w: 220,
+      h: 144,
+      z: 0,
+      data: { url, name, size },
+    });
+  }
+
   async function onDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
@@ -456,17 +469,28 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       return;
     }
 
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    const allFiles = Array.from(e.dataTransfer.files);
+    const imageFiles = allFiles.filter((f) => f.type.startsWith('image/'));
+    const pdfFiles = allFiles.filter((f) => f.type === 'application/pdf');
+    if (!imageFiles.length && !pdfFiles.length) return;
     const start = toWorld(e.clientX, e.clientY);
     let off = 0;
-    for (const file of files) {
+    for (const file of imageFiles) {
       try {
         const { url } = await api.uploadImage(file);
         placeImageNow(url, start.x + off, start.y + off);
         off += 30;
       } catch (err) {
         alert('Image upload failed: ' + (err as Error).message);
+      }
+    }
+    for (const file of pdfFiles) {
+      try {
+        const { url } = await api.uploadFile(file);
+        placePDFNow(url, file.name, file.size, start.x + off, start.y + off);
+        off += 30;
+      } catch (err) {
+        alert('PDF upload failed: ' + (err as Error).message);
       }
     }
   }

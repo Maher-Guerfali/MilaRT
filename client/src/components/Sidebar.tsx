@@ -94,6 +94,7 @@ function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
 
 export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, onOpenTutorial, onOpenCameraScan, onExport, isDrawMode, onActivateMove }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
   const [exportOpen, setExportOpen] = useState(false);
   useEffect(() => {
     if (!exportOpen) return;
@@ -188,6 +189,12 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
         data: { title: 'Untitled', content: '' },
       })),
     },
+    {
+      label: 'PDF',
+      hint: 'PDF file — upload a PDF to keep it on the canvas; click to open or download it',
+      Icon: PDFIconSidebar,
+      action: () => pdfRef.current?.click(),
+    },
   ];
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -199,6 +206,19 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
       onAdd(template({ type: 'image', w: 218, h: 148, data: { url } }));
     } catch (err) {
       alert('Image upload failed: ' + (err as Error).message);
+    }
+  }
+
+  async function onPDFFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { url } = await api.uploadFile(file);
+      if (isDrawMode && onActivateMove) onActivateMove();
+      onAdd(template({ type: 'pdf', w: 220, h: 144, data: { url, name: file.name, size: file.size } }));
+    } catch (err) {
+      alert('PDF upload failed: ' + (err as Error).message);
     }
   }
 
@@ -228,6 +248,13 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
           accept="image/*"
           className="hidden"
           onChange={onFile}
+        />
+        <input
+          ref={pdfRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          className="hidden"
+          onChange={onPDFFile}
         />
       </div>
 
@@ -314,6 +341,18 @@ function HelpIconLocal({ size = 18 }: { size?: number }) {
       <circle cx="12" cy="12" r="9" />
       <line x1="12" y1="8" x2="12" y2="12" />
       <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  );
+}
+
+function PDFIconSidebar({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+      <line x1="9" y1="17" x2="15" y2="17" />
     </svg>
   );
 }
