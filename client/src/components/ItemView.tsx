@@ -456,7 +456,7 @@ export default function ItemView({
       {item.type === 'link' && (
         <TextOrLink item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
-      {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
+      {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} scale={scale} />}
       {item.type === 'document' && (
         <DocumentBox item={item} selected={selected} onOpen={() => onOpenDocument?.(item.id)} />
       )}
@@ -1370,11 +1370,8 @@ function ImageBox({
         // Roughly: keep on-screen UI ~constant via 1/scale, but allow it to
         // grow on big images (so the AI button isn't a speck on a 2000px
         // image) and never exceed ~25% of the image's smallest side.
-        const inv = 1 / view.scale;
         const imageMin = Math.min(item.w, item.h);
-        // Cap so the AI button never exceeds 28% of the image's smaller side on screen.
-        const maxByImage = imageMin * 0.28 / 28;
-        const uiScale = Math.max(0.5, Math.min(inv, Math.max(0.5, maxByImage)));
+        const uiScale = Math.min(1 / view.scale, Math.max(0.5, (imageMin * 0.35) / 28));
         return (
       <div
         className="absolute z-20"
@@ -1972,11 +1969,12 @@ function TextOrLink({
 const SPINE_W = 13;
 
 function BoardRefBox({
-  item, selected, onUpdate, onEnterBoard,
-}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void }) {
+  item, selected, onUpdate, onEnterBoard, scale,
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void; scale: number }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
   const [hov, setHov] = useState(false);
+  const uiScale = Math.min(1 / scale, Math.max(0.5, (Math.min(item.w, item.h) * 0.35) / 28));
 
   async function uploadCover(file: File) {
     try {
@@ -2063,6 +2061,7 @@ function BoardRefBox({
             onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
             className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/40 text-white/90 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-black/60 transition-all z-10"
             title="Set book cover image"
+            style={{ transform: `scale(${uiScale})`, transformOrigin: 'top right' }}
           ><CameraIcon size={13} /></button>
 
           {/* Enter button */}
@@ -2076,6 +2075,8 @@ function BoardRefBox({
               color: '#fff',
               backdropFilter: 'blur(4px)',
               boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.45)' : '0 1px 4px rgba(0,0,0,0.25)',
+              transform: `scale(${uiScale})`,
+              transformOrigin: 'bottom right',
             }}
           >→</button>
 
@@ -2086,6 +2087,8 @@ function BoardRefBox({
               background: 'rgba(0,0,0,0.42)',
               color: 'rgba(255,255,255,0.88)',
               backdropFilter: 'blur(4px)',
+              transform: `scale(${uiScale})`,
+              transformOrigin: 'bottom left',
             }}
           >
             <BoardIcon size={8} />
