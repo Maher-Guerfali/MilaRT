@@ -39,10 +39,10 @@ export default {
           },
         },
         newItemShake: {
-          '0%, 100%': { transform: 'scale(1.05) rotate(0deg)',    filter: 'drop-shadow(0 0 10px rgba(217,116,53,0.65))' },
-          '25%':      { transform: 'scale(1.05) rotate(-1.8deg)', filter: 'drop-shadow(0 0 18px rgba(217,116,53,0.85))' },
-          '50%':      { transform: 'scale(1.07) rotate(0deg)',    filter: 'drop-shadow(0 0 22px rgba(217,116,53,0.95))' },
-          '75%':      { transform: 'scale(1.05) rotate(1.8deg)',  filter: 'drop-shadow(0 0 18px rgba(217,116,53,0.85))' },
+          '0%, 100%': { transform: 'rotate(0deg)',    opacity: '0.72', filter: 'drop-shadow(0 0 10px rgba(217,116,53,0.65))' },
+          '25%':      { transform: 'rotate(-1.8deg)', opacity: '0.60', filter: 'drop-shadow(0 0 18px rgba(217,116,53,0.85))' },
+          '50%':      { transform: 'rotate(0deg)',    opacity: '0.72', filter: 'drop-shadow(0 0 22px rgba(217,116,53,0.95))' },
+          '75%':      { transform: 'rotate(1.8deg)',  opacity: '0.60', filter: 'drop-shadow(0 0 18px rgba(217,116,53,0.85))' },
         },
       },
       animation: {
