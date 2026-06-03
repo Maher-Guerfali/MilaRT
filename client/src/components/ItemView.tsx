@@ -95,7 +95,6 @@ export default function ItemView({
   const [editing, setEditing] = useState(false);
   useEffect(() => { if (!selected) setEditing(false); }, [selected]);
 
-  const [hovered, setHovered] = useState(false);
   // Pressing a still-shaking (fresh) item fades it so you can see what's
   // underneath while you reposition it.
   const [pressed, setPressed] = useState(false);
@@ -385,11 +384,6 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
-  // When the canvas is zoomed way out, scale items up to readable size on hover.
-  const hoverScale = (view.scale < 0.55 && hovered && !selected)
-    ? Math.min(1 / view.scale, 6)
-    : 1;
-
   return (
     <div
       data-item
@@ -403,21 +397,18 @@ export default function ItemView({
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
         pointerEvents: interactive ? 'auto' : 'none',
-        zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : (hovered ? (item.z ?? 0) + 9000 : item.z ?? 0),
+        zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
         filter: !isMergeTarget && selected
           ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))'
           : isBoardDropTarget
             ? 'drop-shadow(0 10px 26px rgba(217,116,53,0.45))'
             : undefined,
-        transform: isBoardDropTarget
-          ? 'scale(1.06)'
-          : hoverScale > 1 ? `scale(${hoverScale.toFixed(3)})` : undefined,
-        transformOrigin: isBoardDropTarget ? 'center center' : 'top left',
+        transform: isBoardDropTarget ? 'scale(1.06)' : undefined,
+        transformOrigin: 'center center',
         transition: 'transform 0.15s ease-out, opacity 0.12s ease-out',
         opacity: isFresh && pressed ? 0.2 : 1,
       }}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => { setHovered(false); setPressed(false); }}
+      onPointerLeave={() => { setPressed(false); }}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         if (isFresh) setPressed(true);
