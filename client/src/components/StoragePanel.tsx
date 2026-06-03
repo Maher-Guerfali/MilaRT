@@ -267,6 +267,7 @@ function StorageCard({
   const isBoard = item.type === 'board';
   const isPDF = item.type === 'pdf';
   const imgUrl = isImage ? (item.data as Partial<ImageData>).url : null;
+  const imgLabel = isImage ? (item.data as { label?: string }).label : undefined;
   const link = !isImage && !isBoard && !isPDF ? (item.data as Partial<LinkData>) : null;
   const linkText = link?.title || link?.url || 'Untitled';
   const boardData = isBoard
@@ -292,12 +293,20 @@ function StorageCard({
       >
         {/* Image */}
         {isImage && imgUrl && (
-          <img
-            src={imgUrl}
-            alt=""
-            draggable={false}
-            className="w-full h-full object-cover pointer-events-none"
-          />
+          <>
+            <img
+              src={imgUrl}
+              alt=""
+              draggable={false}
+              className="w-full h-full object-cover pointer-events-none"
+            />
+            {imgLabel && (
+              <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 text-[8.5px] font-semibold text-white/95 truncate"
+                style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%)' }}>
+                {imgLabel}
+              </div>
+            )}
+          </>
         )}
         {isImage && !imgUrl && (
           <div className="w-full h-full flex items-center justify-center text-ink/30 text-[10px]">No image</div>

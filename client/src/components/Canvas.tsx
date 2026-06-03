@@ -36,6 +36,8 @@ interface Props {
   /** Move the given items into the nested board referenced by boardItemId. */
   onDropIntoBoard?: (srcIds: string[], boardItemId: string) => void;
   onOpenDocument?: (id: string) => void;
+  onCopyToStorage?: (url: string) => void;
+  onCreateBoardWithCover?: (url: string) => void;
   freshItemId?: string | null;
   onClearFresh?: (id: string) => void;
   /** Remote peers' cursors (rendered as an overlay). */
@@ -80,6 +82,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
     onExportBoardHere,
     onSendToStorage, onRestoreFromStorageAt, onMerge, onDropIntoBoard, onOpenDocument,
+    onCopyToStorage, onCreateBoardWithCover,
     freshItemId, onClearFresh,
     peers, onLocalCursorMove,
   } = props;
@@ -634,6 +637,8 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onMerge={onMerge}
             onDropIntoBoard={onDropIntoBoard}
             onOpenDocument={onOpenDocument}
+            onCopyToStorage={onCopyToStorage}
+            onCreateBoardWithCover={onCreateBoardWithCover}
           />
         ))}
       </div>

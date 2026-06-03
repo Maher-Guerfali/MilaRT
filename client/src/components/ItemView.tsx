@@ -27,6 +27,10 @@ interface Props {
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  /** Copy a generated image URL into storage without removing the canvas item. */
+  onCopyToStorage?: (url: string) => void;
+  /** Create a new board item with the given image as cover, near canvas centre. */
+  onCreateBoardWithCover?: (url: string) => void;
   /** Live drop-target highlight on a board element while dragging. */
   onSetBoardDropTarget?: (id: string | null) => void;
   /** Drop dragged items inside the given board (deferred to BoardPage). */
@@ -54,6 +58,7 @@ export default function ItemView({
   isMergeTarget, isBoardDropTarget, isFresh,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onExportBoardHere, onMoveLayer,
   onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
+  onCopyToStorage, onCreateBoardWithCover,
   onSetBoardDropTarget, onDropIntoBoard,
 }: Props) {
   const mergeTargetIdRef = useRef<string | null>(null);
@@ -436,7 +441,10 @@ export default function ItemView({
         <Sticky item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
       {item.type === 'image' && (
-        <ImageBox item={item} selected={selected} strokes={strokes} view={view} liveFrame={liveFrame} onUpdate={onUpdate} />
+        <ImageBox item={item} selected={selected} strokes={strokes} view={view} liveFrame={liveFrame} onUpdate={onUpdate}
+          onCopyToStorage={onCopyToStorage}
+          onCreateBoardWithCover={onCreateBoardWithCover}
+        />
       )}
       {item.type === 'link' && (
         <TextOrLink item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
@@ -1118,12 +1126,14 @@ function Sticky({
 type ImgFrame = { x: number; y: number; w: number; h: number };
 
 function ImageBox({
-  item, selected, strokes, view, liveFrame, onUpdate,
+  item, selected, strokes, view, liveFrame, onUpdate, onCopyToStorage, onCreateBoardWithCover,
 }: {
   item: BaseItem; selected: boolean;
   strokes: Stroke[]; view: { x: number; y: number; scale: number };
   liveFrame?: ImgFrame;
   onUpdate: (p: Partial<BaseItem>) => void;
+  onCopyToStorage?: (url: string) => void;
+  onCreateBoardWithCover?: (url: string) => void;
 }) {
   const d = item.data as Partial<ImageData> & {
     versions?: string[];
@@ -1196,6 +1206,7 @@ function ImageBox({
     const nextData = { ...d, url, versions: newVersions };
     delete (nextData as Record<string, unknown>).imgFrame;
     onUpdate({ data: nextData });
+    onCopyToStorage?.(url);
     setAiOpen(false);
     setAiPrompt('');
     setAiRefs([]);
@@ -1537,15 +1548,26 @@ function ImageBox({
           </div>
           <div className="grid grid-cols-2 gap-1.5 flex-1 min-h-0">
             {aiVariants.map((u, i) => (
-              <button
-                key={i}
-                onClick={() => commitAIResult(u)}
-                title={`Pick variant ${i + 1}`}
-                className="relative rounded-lg overflow-hidden ring-1 ring-white/20 hover:ring-2 hover:ring-[#D97435] transition-all"
-              >
-                <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
-                <span className="absolute bottom-1 right-1 px-1.5 py-[1px] rounded bg-ink/70 text-white text-[9px] font-bold pointer-events-none">{i + 1}</span>
-              </button>
+              <div key={i} className="relative flex flex-col gap-0.5">
+                <button
+                  onClick={() => commitAIResult(u)}
+                  title={`Use variant ${i + 1}`}
+                  className="relative flex-1 rounded-lg overflow-hidden ring-1 ring-white/20 hover:ring-2 hover:ring-[#D97435] transition-all"
+                >
+                  <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
+                  <span className="absolute bottom-1 right-1 px-1.5 py-[1px] rounded bg-ink/70 text-white text-[9px] font-bold pointer-events-none">{i + 1}</span>
+                </button>
+                {/* Per-variant actions */}
+                {onCreateBoardWithCover && (
+                  <button
+                    onClick={() => { onCreateBoardWithCover(u); setAiVariants([]); }}
+                    title="Make a book board with this as the cover"
+                    className="w-full flex items-center justify-center gap-1 px-1.5 py-[3px] rounded text-[9px] font-semibold text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                  >
+                    <BookCoverIcon size={9} /> Book cover
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -1937,13 +1959,15 @@ function TextOrLink({
   );
 }
 
+// ── Book-styled board component ────────────────────────────────────────────
+const SPINE_W = 13;
+
 function BoardRefBox({
   item, selected, onUpdate, onEnterBoard,
 }: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
   const [hov, setHov] = useState(false);
-  const highlight = selected;
 
   async function uploadCover(file: File) {
     try {
@@ -1954,84 +1978,143 @@ function BoardRefBox({
     }
   }
 
+  const coverBg = d.imageUrl ? undefined : 'linear-gradient(160deg, #e8e2d8 0%, #f5f0e8 45%, #ede6dc 100%)';
+
   return (
     <div
       className="w-full h-full flex flex-col items-center"
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
     >
+      {/* ── Book body ── */}
       <div
-        className="w-full flex-1 min-h-0 rounded-[18px] flex items-center justify-center relative overflow-hidden transition-all"
+        className="w-full flex-1 min-h-0 relative flex"
         style={{
-          background: '#FDFAF5',
-          border: `2px solid ${highlight ? '#D97435' : hov ? 'rgba(217,116,53,0.65)' : 'rgba(217,116,53,0.30)'}`,
-          boxShadow: highlight
-            ? '0 0 0 3px rgba(217,116,53,0.19)'
-            : hov ? '0 4px 18px rgba(217,116,53,0.12)' : '0 2px 8px rgba(26,21,16,0.06)',
+          borderRadius: '3px 8px 8px 3px',
+          overflow: 'hidden',
+          boxShadow: selected
+            ? `3px 8px 22px rgba(0,0,0,0.36), -2px 0 6px rgba(0,0,0,0.18), 0 0 0 2px #D97435`
+            : hov
+              ? '4px 10px 24px rgba(0,0,0,0.30), -2px 0 6px rgba(0,0,0,0.16)'
+              : '3px 7px 18px rgba(0,0,0,0.22), -1px 0 4px rgba(0,0,0,0.12)',
+          transition: 'box-shadow 0.18s ease',
         }}
       >
-        {d.imageUrl ? (
-          <img src={d.imageUrl} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
-        ) : (
-          <div className="text-ink/50">
-            <BoardIcon size={30} />
-          </div>
-        )}
-
-        {/* Enter-board arrow — always visible, gets orange bg when selected */}
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onEnterBoard(); }}
-          title="Open board"
-          className="absolute bottom-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-[13px] z-10 transition-all"
-          style={{
-            background: selected ? '#D97435' : 'transparent',
-            color: selected ? '#fff' : 'rgba(26,21,16,0.45)',
-            boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.35)' : 'none',
-            lineHeight: 1,
-          }}
-        >→</button>
-
+        {/* Spine */}
         <div
-          className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[9px] font-bold uppercase tracking-[0.05em] pointer-events-none"
           style={{
-            background: 'rgba(253,250,245,0.92)',
-            color: '#1A1510',
-            backdropFilter: 'blur(6px)',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.10)',
+            width: SPINE_W,
+            minWidth: SPINE_W,
+            flexShrink: 0,
+            background: 'linear-gradient(to right, rgba(10,8,5,0.55) 0%, rgba(10,8,5,0.28) 60%, rgba(10,8,5,0.08) 100%)',
+            zIndex: 3,
+            position: 'relative',
           }}
         >
-          <BoardIcon size={10} />
-          <span>Board</span>
+          {/* Spine highlight line */}
+          <div style={{
+            position: 'absolute', top: 0, right: 1, bottom: 0, width: 1,
+            background: 'linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 100%)',
+          }} />
         </div>
 
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
-          className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-white/90 shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/70 hover:text-ink opacity-0 group-hover:opacity-100"
-          title="Set thumbnail"
-        ><CameraIcon size={14} /></button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = '';
-            if (f) uploadCover(f);
-          }}
-        />
+        {/* Cover face */}
+        <div
+          className="flex-1 relative overflow-hidden"
+          style={{ background: coverBg }}
+        >
+          {d.imageUrl && (
+            <img
+              src={d.imageUrl}
+              alt=""
+              draggable={false}
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            />
+          )}
+
+          {/* Default cover — no image */}
+          {!d.imageUrl && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="opacity-30">
+                <BookCoverIcon size={36} />
+              </div>
+            </div>
+          )}
+
+          {/* Page-edge sheen on the right */}
+          <div style={{
+            position: 'absolute', top: 0, right: 0, bottom: 0, width: 5,
+            background: 'linear-gradient(to left, rgba(255,255,255,0.55) 0%, transparent 100%)',
+            zIndex: 2, pointerEvents: 'none',
+          }} />
+
+          {/* Top-right camera button */}
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+            className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/40 text-white/90 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-black/60 transition-all z-10"
+            title="Set book cover image"
+          ><CameraIcon size={13} /></button>
+
+          {/* Enter button */}
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onEnterBoard(); }}
+            title="Open board"
+            className="absolute bottom-2 right-2 w-7 h-7 rounded-full flex items-center justify-center text-[14px] z-10 transition-all"
+            style={{
+              background: selected ? '#D97435' : 'rgba(0,0,0,0.40)',
+              color: '#fff',
+              backdropFilter: 'blur(4px)',
+              boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.45)' : '0 1px 4px rgba(0,0,0,0.25)',
+            }}
+          >→</button>
+
+          {/* "Board" badge — bottom left */}
+          <div
+            className="absolute bottom-2 left-2 flex items-center gap-1 px-1.5 py-[3px] rounded text-[8px] font-bold uppercase tracking-[0.06em] pointer-events-none z-10"
+            style={{
+              background: 'rgba(0,0,0,0.42)',
+              color: 'rgba(255,255,255,0.88)',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            <BoardIcon size={8} />
+            <span>Board</span>
+          </div>
+        </div>
       </div>
 
+      {/* Book title below the book */}
       <input
-        className="w-full mt-[7px] bg-transparent text-[12px] font-bold text-ink text-center focus:outline-none rounded-md px-1 py-0.5 hover:bg-white/50 focus:bg-white/80"
+        className="w-full mt-[6px] bg-transparent text-[11px] font-bold text-ink text-center focus:outline-none rounded-md px-1 py-0.5 hover:bg-white/50 focus:bg-white/80"
         value={d.name ?? ''}
         placeholder="Board name"
         onChange={(e) => onUpdate({ data: { ...d, name: e.target.value } })}
         onPointerDown={(e) => e.stopPropagation()}
       />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) uploadCover(f);
+        }}
+      />
     </div>
+  );
+}
+
+function BookCoverIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2h13a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
+      <line x1="4" y1="2" x2="4" y2="22" strokeWidth="3" stroke="currentColor" opacity="0.35" />
+    </svg>
   );
 }
 

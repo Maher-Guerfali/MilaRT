@@ -256,6 +256,23 @@ export default function BoardPage() {
     setItems((xs) => [...xs, { ...item, z: xs.length }]);
     markFreshItem(item.id);
   }
+
+  function copyImageToStorage(url: string) {
+    const id = nanoid(10);
+    const storedItem: BaseItem = {
+      id, type: 'image', x: 0, y: 0, w: 218, h: 148, z: 0,
+      data: { url, label: 'AI generated' },
+    };
+    setStoredItems((s) => [storedItem, ...s]);
+  }
+
+  function createBoardWithCover(imageUrl: string) {
+    const id = nanoid(10);
+    addItemAtCenter({
+      id, type: 'board', w: 118, h: 155, z: 0,
+      data: { name: 'New board', imageUrl },
+    });
+  }
   function addItemAtCenter(template: Omit<BaseItem, 'x' | 'y'>) {
     const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
     addItem({ ...template, x: c.x - template.w / 2, y: c.y - template.h / 2 } as BaseItem);
@@ -700,6 +717,8 @@ export default function BoardPage() {
           onMerge={mergeItems}
           onDropIntoBoard={dropIntoBoard}
           onOpenDocument={setOpenDocumentId}
+          onCopyToStorage={copyImageToStorage}
+          onCreateBoardWithCover={createBoardWithCover}
           freshItemId={freshItemId}
           onClearFresh={clearFreshItem}
           peers={peers}
