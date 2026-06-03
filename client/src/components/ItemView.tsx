@@ -362,15 +362,12 @@ export default function ItemView({
   }
 
   const pos = ghost ?? item;
-  // Keep controls at a fixed screen size, but never larger than ~35% of the
-  // item's smaller dimension so they don't swamp tiny items when zoomed out.
-  const itemMinSide = Math.min(item.w, item.h);
-  const controlScale = Math.min(1 / scale, Math.max(0.5, (itemMinSide * 0.35) / 28));
+  // Corner controls: no counter-scaling — they scale naturally with the canvas
+  // so they're always proportional to the item and never inflate its visual size.
   const fixedControl = (x: string, y: string): React.CSSProperties => ({
     left: x,
     top: y,
-    transform: `scale(${controlScale}) translate(-50%, -50%)`,
-    transformOrigin: 'top left',
+    transform: 'translate(-50%, -50%)',
     zIndex: 60,
   });
 
@@ -387,9 +384,8 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
-  // Only show hover controls (drag grip, resize handle) when zoomed in enough
-  // that the fixed-size buttons don't visually overwhelm the item on screen.
-  const showHoverControls = scale >= 0.65;
+  // Show hover controls when the canvas is zoomed in enough for them to be usable.
+  const showHoverControls = scale >= 0.5;
 
   return (
     <div
@@ -1370,8 +1366,7 @@ function ImageBox({
         // Roughly: keep on-screen UI ~constant via 1/scale, but allow it to
         // grow on big images (so the AI button isn't a speck on a 2000px
         // image) and never exceed ~25% of the image's smallest side.
-        const imageMin = Math.min(item.w, item.h);
-        const uiScale = Math.min(1 / view.scale, Math.max(0.5, (imageMin * 0.35) / 28));
+        const uiScale = 1;
         return (
       <div
         className="absolute z-20"
@@ -1969,12 +1964,11 @@ function TextOrLink({
 const SPINE_W = 13;
 
 function BoardRefBox({
-  item, selected, onUpdate, onEnterBoard, scale,
-}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void; scale: number }) {
+  item, selected, onUpdate, onEnterBoard,
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void; scale?: number }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
   const [hov, setHov] = useState(false);
-  const uiScale = Math.min(1 / scale, Math.max(0.5, (Math.min(item.w, item.h) * 0.35) / 28));
 
   async function uploadCover(file: File) {
     try {
@@ -2061,7 +2055,6 @@ function BoardRefBox({
             onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
             className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/40 text-white/90 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-black/60 transition-all z-10"
             title="Set book cover image"
-            style={{ transform: `scale(${uiScale})`, transformOrigin: 'top right' }}
           ><CameraIcon size={13} /></button>
 
           {/* Enter button */}
@@ -2075,8 +2068,6 @@ function BoardRefBox({
               color: '#fff',
               backdropFilter: 'blur(4px)',
               boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.45)' : '0 1px 4px rgba(0,0,0,0.25)',
-              transform: `scale(${uiScale})`,
-              transformOrigin: 'bottom right',
             }}
           >→</button>
 
@@ -2087,8 +2078,6 @@ function BoardRefBox({
               background: 'rgba(0,0,0,0.42)',
               color: 'rgba(255,255,255,0.88)',
               backdropFilter: 'blur(4px)',
-              transform: `scale(${uiScale})`,
-              transformOrigin: 'bottom left',
             }}
           >
             <BoardIcon size={8} />
