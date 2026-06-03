@@ -387,12 +387,16 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
+  // Only show hover controls (drag grip, resize handle) when the item is
+  // large enough on screen that the 28px buttons won't dominate the item.
+  const showHoverControls = Math.min(item.w, item.h) * scale >= 52;
+
   return (
     <div
       data-item
       data-item-id={item.id}
       data-item-type={item.type}
-      className={`group absolute${
+      className={`${showHoverControls ? 'group' : ''} absolute${
         isMergeTarget ? ' animate-mergeGlow' :
         isFresh && !selected ? ' animate-newItemShake' :
         selected ? ' animate-itemWiggle' : ''
