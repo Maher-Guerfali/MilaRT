@@ -362,7 +362,10 @@ export default function ItemView({
   }
 
   const pos = ghost ?? item;
-  const controlScale = 1 / scale;
+  // Keep controls at a fixed screen size, but never larger than ~35% of the
+  // item's smaller dimension so they don't swamp tiny items when zoomed out.
+  const itemMinSide = Math.min(item.w, item.h);
+  const controlScale = Math.min(1 / scale, Math.max(0.5, (itemMinSide * 0.35) / 28));
   const fixedControl = (x: string, y: string): React.CSSProperties => ({
     left: x,
     top: y,
@@ -1365,10 +1368,9 @@ function ImageBox({
         // image) and never exceed ~25% of the image's smallest side.
         const inv = 1 / view.scale;
         const imageMin = Math.min(item.w, item.h);
-        const imageBoost = Math.max(1, Math.min(2.4, imageMin / 220));
-        const raw = inv * imageBoost;
-        const maxByImage = imageMin / 100; // 100 = base button design width-ish
-        const uiScale = Math.max(0.7, Math.min(raw, Math.max(0.7, maxByImage)));
+        // Cap so the AI button never exceeds 28% of the image's smaller side on screen.
+        const maxByImage = imageMin * 0.28 / 28;
+        const uiScale = Math.max(0.5, Math.min(inv, Math.max(0.5, maxByImage)));
         return (
       <div
         className="absolute z-20"
