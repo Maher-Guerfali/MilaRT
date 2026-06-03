@@ -52,6 +52,8 @@ export interface CanvasHandle {
   /** World-space size of the visible viewport — used to size pasted/scanned
    *  content to roughly fit on screen instead of a fixed world-px constant. */
   getViewportWorld: () => { centerX: number; centerY: number; worldW: number; worldH: number };
+  /** Current canvas zoom scale (1 = 100%). */
+  getScale: () => number;
   /** Smoothly animate the camera so the given items fit (~70% default) the
    *  viewport. Used by the F shortcut and the per-item focus button. */
   focusOnIds: (ids: string[], opts?: { fit?: number; duration?: number }) => void;
@@ -204,6 +206,7 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   useImperativeHandle(ref, () => ({
     getCenter: centerOfView,
     getViewportWorld: viewportWorld,
+    getScale: () => viewRef.current.scale,
     focusOnIds,
     captureViewport: async () => {
       const el = wrapRef.current;
@@ -417,26 +420,30 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   }, []);
 
   function placeImageNow(url: string, cx: number, cy: number, defaultW = 218, defaultH = 148) {
+    const s = viewRef.current.scale;
+    const w = defaultW / s;
+    const h = defaultH / s;
     onAdd({
       id: nanoid(10),
       type: 'image',
-      x: cx - defaultW / 2,
-      y: cy - defaultH / 2,
-      w: defaultW,
-      h: defaultH,
+      x: cx - w / 2,
+      y: cy - h / 2,
+      w, h,
       z: 0,
       data: { url },
     });
   }
 
   function placePDFNow(url: string, name: string, size: number, cx: number, cy: number) {
+    const s = viewRef.current.scale;
+    const w = 220 / s;
+    const h = 144 / s;
     onAdd({
       id: nanoid(10),
       type: 'pdf',
-      x: cx - 110,
-      y: cy - 72,
-      w: 220,
-      h: 144,
+      x: cx - w / 2,
+      y: cy - h / 2,
+      w, h,
       z: 0,
       data: { url, name, size },
     });
@@ -463,10 +470,14 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       try {
         const template = JSON.parse(itemJson) as Omit<BaseItem, 'x' | 'y'>;
         const pos = toWorld(e.clientX, e.clientY);
+        const s = viewRef.current.scale;
+        const w = template.w / s;
+        const h = template.h / s;
         onAdd({
           ...template,
-          x: pos.x - template.w / 2,
-          y: pos.y - template.h / 2,
+          w, h,
+          x: pos.x - w / 2,
+          y: pos.y - h / 2,
           z: 0,
         } as BaseItem);
       } catch { /* ignore bad data */ }

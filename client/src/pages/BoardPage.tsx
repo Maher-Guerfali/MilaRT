@@ -277,7 +277,10 @@ export default function BoardPage() {
   }
   function addItemAtCenter(template: Omit<BaseItem, 'x' | 'y'>) {
     const c = canvasRef.current?.getCenter() ?? { x: 0, y: 0 };
-    addItem({ ...template, x: c.x - template.w / 2, y: c.y - template.h / 2 } as BaseItem);
+    const s = canvasRef.current?.getScale() ?? 1;
+    const w = template.w / s;
+    const h = template.h / s;
+    addItem({ ...template, w, h, x: c.x - w / 2, y: c.y - h / 2 } as BaseItem);
   }
   // Use functional setState so rapid successive strokes don't overwrite each other
   function addStroke(s: import('../types').Stroke) {
