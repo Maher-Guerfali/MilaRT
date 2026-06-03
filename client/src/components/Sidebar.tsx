@@ -4,7 +4,7 @@ import type { BaseItem } from '../types';
 import { api } from '../api';
 import {
   StickyIcon, LinkIcon, BoardIcon, ImageIcon, TextIcon, DocumentIcon,
-  SettingsIcon, CameraIcon,
+  SettingsIcon, CameraIcon, PenIcon,
 } from './icons';
 import Tooltip from './Tooltip';
 
@@ -194,6 +194,13 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
       hint: 'PDF file — upload a PDF to keep it on the canvas; click to open or download it',
       Icon: PDFIconSidebar,
       action: () => pdfRef.current?.click(),
+    },
+    {
+      label: 'Draw',
+      hint: 'Drawing paper — opens a full-screen sketch surface with pens, eraser, colours and image import',
+      Icon: PenIcon,
+      dragData: JSON.stringify(template({ type: 'paper', w: 156, h: 116, data: { strokes: [], images: [] } })),
+      action: () => addItem(template({ type: 'paper', w: 156, h: 116, data: { strokes: [], images: [] } })),
     },
   ];
 

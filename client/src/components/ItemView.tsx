@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, PDFData, Stroke } from '../types';
+import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, PDFData, PaperData, Stroke } from '../types';
 import { api } from '../api';
-import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon } from './icons';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon, PenIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -27,6 +27,8 @@ interface Props {
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  /** Open the full-screen draw-paper editor for a 'paper' item. */
+  onOpenPaper?: (id: string) => void;
   /** Copy a generated image URL into storage without removing the canvas item. */
   onCopyToStorage?: (url: string) => void;
   /** Create a new board item with the given image as cover, near canvas centre. */
@@ -57,7 +59,7 @@ export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
   isMergeTarget, isBoardDropTarget, isFresh,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onExportBoardHere, onMoveLayer,
-  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
+  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument, onOpenPaper,
   onCopyToStorage, onCreateBoardWithCover,
   onSetBoardDropTarget, onDropIntoBoard,
 }: Props) {
@@ -94,6 +96,9 @@ export default function ItemView({
   useEffect(() => { if (!selected) setEditing(false); }, [selected]);
 
   const [hovered, setHovered] = useState(false);
+  // Pressing a still-shaking (fresh) item fades it so you can see what's
+  // underneath while you reposition it.
+  const [pressed, setPressed] = useState(false);
 
   // Right-click context menu (currently only used for image items).
   // Coordinates are in viewport space — the menu is portalled at fixed pos.
@@ -351,6 +356,8 @@ export default function ItemView({
         setEditing(true);
       } else if (item.type === 'document' && onOpenDocument) {
         onOpenDocument(item.id);
+      } else if (item.type === 'paper' && onOpenPaper) {
+        onOpenPaper(item.id);
       }
     }
   }
@@ -406,18 +413,20 @@ export default function ItemView({
           ? 'scale(1.06)'
           : hoverScale > 1 ? `scale(${hoverScale.toFixed(3)})` : undefined,
         transformOrigin: isBoardDropTarget ? 'center center' : 'top left',
-        transition: 'transform 0.15s ease-out',
+        transition: 'transform 0.15s ease-out, opacity 0.12s ease-out',
+        opacity: isFresh && pressed ? 0.2 : 1,
       }}
       onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
+      onPointerLeave={() => { setHovered(false); setPressed(false); }}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
+        if (isFresh) setPressed(true);
         if (!canDragFrom(e.target)) return;
         startDrag(e, 'move');
       }}
       onPointerMove={onDrag}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onPointerUp={(e) => { setPressed(false); endDrag(e); }}
+      onPointerCancel={(e) => { setPressed(false); endDrag(e); }}
       onContextMenu={(e) => {
         if (item.type === 'image') {
           const url = (item.data as Partial<ImageData>).url;
@@ -455,6 +464,9 @@ export default function ItemView({
       )}
       {item.type === 'pdf' && (
         <PDFBox item={item} selected={selected} />
+      )}
+      {item.type === 'paper' && (
+        <PaperBox item={item} selected={selected} onOpen={() => onOpenPaper?.(item.id)} />
       )}
 
       {/* Drag grip — fixed screen size even while the canvas is zoomed.
@@ -2377,5 +2389,88 @@ function PDFFileIcon() {
       <line x1="9" y1="17" x2="15" y2="17" />
       <line x1="9" y1="9" x2="11" y2="9" />
     </svg>
+  );
+}
+
+// ── PaperBox ───────────────────────────────────────────────────────────────
+// Small rectangle on the canvas representing a free-form drawing surface.
+// Renders a live mini-preview of its strokes; click to open the full editor.
+function PaperBox({ item, selected, onOpen }: { item: BaseItem; selected: boolean; onOpen: () => void }) {
+  const d = item.data as Partial<PaperData>;
+  const strokes = d.strokes ?? [];
+  const hasImages = (d.images?.length ?? 0) > 0;
+
+  // Compute a viewBox that fits all stroke points so the preview shows the
+  // actual drawing scaled into the card.
+  const box = (() => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of strokes) {
+      for (let i = 0; i < s.points.length; i += 3) {
+        const x = s.points[i], y = s.points[i + 1];
+        if (x < minX) minX = x; if (y < minY) minY = y;
+        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+      }
+    }
+    if (!isFinite(minX)) return null;
+    const pad = 12;
+    return { x: minX - pad, y: minY - pad, w: Math.max(1, maxX - minX + pad * 2), h: Math.max(1, maxY - minY + pad * 2) };
+  })();
+
+  function pathFor(s: Stroke) {
+    let p = '';
+    for (let i = 0; i < s.points.length; i += 3) {
+      p += (i === 0 ? 'M' : 'L') + s.points[i].toFixed(1) + ' ' + s.points[i + 1].toFixed(1);
+    }
+    return p;
+  }
+
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div
+        className="relative flex-1 min-h-0 w-full rounded-xl overflow-hidden group/paper"
+        style={{
+          background: '#FFFFFF',
+          border: `1.5px solid ${selected ? '#D97435' : 'rgba(26,21,16,0.14)'}`,
+          boxShadow: selected
+            ? '0 0 0 2px rgba(217,116,53,0.22), 0 4px 14px rgba(26,21,16,0.10)'
+            : '0 2px 8px rgba(26,21,16,0.07)',
+        }}
+      >
+        {/* Mini preview of the drawing */}
+        {box && (
+          <svg className="absolute inset-0 w-full h-full" viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`} preserveAspectRatio="xMidYMid meet">
+            {strokes.map((s, i) => (
+              <path key={i} d={pathFor(s)} stroke={s.color} strokeWidth={s.width} fill="none" strokeLinecap="round" strokeLinejoin="round" opacity={0.95} />
+            ))}
+          </svg>
+        )}
+
+        {/* Empty state */}
+        {!box && !hasImages && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-ink/35">
+            <PenIcon size={22} />
+            <span className="text-[10px] font-semibold">Tap to draw</span>
+          </div>
+        )}
+
+        {/* Open button — appears on hover or when selected */}
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          title="Open drawing paper"
+          className={`absolute inset-0 flex items-center justify-center transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover/paper:opacity-100'}`}
+          style={{ background: 'rgba(217,116,53,0.07)' }}
+        >
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold text-white" style={{ background: 'rgba(217,116,53,0.92)' }}>Open paper</span>
+        </button>
+
+        {/* Badge */}
+        <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-[3px] rounded text-[8px] font-bold uppercase tracking-[0.06em] pointer-events-none z-10"
+          style={{ background: 'rgba(253,250,245,0.92)', color: '#1A1510', backdropFilter: 'blur(4px)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+          <PenIcon size={9} /><span>Paper</span>
+        </div>
+      </div>
+    </div>
   );
 }

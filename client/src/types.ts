@@ -1,4 +1,4 @@
-export type ItemType = 'sticky' | 'image' | 'link' | 'board' | 'document' | 'pdf';
+export type ItemType = 'sticky' | 'image' | 'link' | 'board' | 'document' | 'pdf' | 'paper';
 
 export interface BaseItem {
   id: string;
@@ -26,6 +26,11 @@ export interface DocumentData {
   content: string;
 }
 export interface PDFData { url: string; name: string; size?: number; }
+
+// A free-form drawing surface (the "Paper" canvas). Holds its own strokes
+// in world coordinates plus any imported images placed on the sheet.
+export interface PaperImageEl { id: string; url: string; x: number; y: number; w: number; h: number; }
+export interface PaperData { strokes: Stroke[]; images?: PaperImageEl[]; }
 
 export type StrokeTool = 'pen' | 'fountain' | 'pencil' | 'marker' | 'brush';
 

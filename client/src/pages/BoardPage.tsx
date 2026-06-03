@@ -15,6 +15,7 @@ import CameraScanModal from '../components/CameraScanModal';
 import IdentityPromptModal from '../components/IdentityPromptModal';
 import StoragePanel from '../components/StoragePanel';
 import DocumentEditor from '../components/DocumentEditor';
+import DrawPaper from '../components/DrawPaper';
 import { useHistory } from '../hooks/useHistory';
 import { usePresence } from '../hooks/usePresence';
 import { loadIdentity, saveIdentity, type Identity } from '../lib/identity';
@@ -40,6 +41,7 @@ export default function BoardPage() {
   const [isMove, setIsMove] = useState(true);
   const [drawOpen, setDrawOpen] = useState(false);
   const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
+  const [openPaperId, setOpenPaperId] = useState<string | null>(null);
   const [drawTool, setDrawTool] = useState<DrawTool>('pencil');
   const [drawColor, setDrawColor] = useState('#1a1510');
   const [penSize, setPenSize] = useState<SizeKey>('md');
@@ -717,6 +719,7 @@ export default function BoardPage() {
           onMerge={mergeItems}
           onDropIntoBoard={dropIntoBoard}
           onOpenDocument={setOpenDocumentId}
+          onOpenPaper={setOpenPaperId}
           onCopyToStorage={copyImageToStorage}
           onCreateBoardWithCover={createBoardWithCover}
           freshItemId={freshItemId}
@@ -768,6 +771,18 @@ export default function BoardPage() {
             item={doc}
             onUpdate={(patch) => updateItem(doc.id, patch)}
             onClose={() => setOpenDocumentId(null)}
+          />
+        );
+      })()}
+
+      {openPaperId && (() => {
+        const paper = items.find((it) => it.id === openPaperId);
+        if (!paper) return null;
+        return (
+          <DrawPaper
+            item={paper}
+            onUpdate={(patch) => updateItem(paper.id, patch)}
+            onClose={() => setOpenPaperId(null)}
           />
         );
       })()}
