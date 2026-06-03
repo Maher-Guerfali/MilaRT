@@ -387,9 +387,9 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
-  // Only show hover controls (drag grip, resize handle) when the item is
-  // large enough on screen that the 28px buttons won't dominate the item.
-  const showHoverControls = Math.min(item.w, item.h) * scale >= 52;
+  // Only show hover controls (drag grip, resize handle) when zoomed in enough
+  // that the fixed-size buttons don't visually overwhelm the item on screen.
+  const showHoverControls = scale >= 0.65;
 
   return (
     <div
