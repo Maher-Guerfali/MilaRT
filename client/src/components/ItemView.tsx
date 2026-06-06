@@ -26,6 +26,11 @@ interface Props {
   onOpenDocument?: (id: string) => void;
 }
 
+// Zoom floor for counter-scaled on-canvas controls. Below this the 1/scale
+// counter-scale would balloon controls off the item; clamping the denominator
+// caps them at their ~60%-zoom footprint so they shrink on screen instead.
+const CONTROL_ZOOM_FLOOR = 0.6;
+
 function youTubeId(raw: string): string | null {
   const s = raw.trim();
   if (!/^https?:\/\//i.test(s)) return null;
@@ -293,7 +298,13 @@ export default function ItemView({
   }
 
   const pos = ghost ?? item;
-  const controlScale = 1 / scale;
+  // On-canvas controls counter-scale by 1/scale to hold a constant on-screen
+  // size as the canvas zooms. But 1/scale is unbounded: below ~60% zoom it
+  // balloons the controls' world-space footprint until they overflow and bury
+  // the item ("huge and invisible"). Cap the counter-scale at its 60%-zoom
+  // value so zooming out further shrinks the controls on screen instead of
+  // growing them off the item.
+  const controlScale = 1 / Math.max(scale, CONTROL_ZOOM_FLOOR);
   const fixedControl = (x: string, y: string): React.CSSProperties => ({
     left: x,
     top: y,
@@ -1168,7 +1179,9 @@ function ImageBox({
         // Roughly: keep on-screen UI ~constant via 1/scale, but allow it to
         // grow on big images (so the AI button isn't a speck on a 2000px
         // image) and never exceed ~25% of the image's smallest side.
-        const inv = 1 / view.scale;
+        // Floor the zoom at CONTROL_ZOOM_FLOOR so below ~60% the controls stop
+        // ballooning and burying the image.
+        const inv = 1 / Math.max(view.scale, CONTROL_ZOOM_FLOOR);
         const imageMin = Math.min(item.w, item.h);
         const imageBoost = Math.max(1, Math.min(2.4, imageMin / 220));
         const raw = inv * imageBoost;
