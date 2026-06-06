@@ -26,6 +26,12 @@ interface Props {
   onOpenDocument?: (id: string) => void;
 }
 
+// Hover controls (drag grip, resize handles) are only shown once the canvas is
+// at least this zoomed in. Controls now scale with the canvas instead of
+// counter-scaling, so at low zoom they'd be too small to use — hiding them
+// keeps zoomed-out items clean.
+const CONTROL_MIN_ZOOM = 0.6;
+
 function youTubeId(raw: string): string | null {
   const s = raw.trim();
   if (!/^https?:\/\//i.test(s)) return null;
@@ -293,12 +299,17 @@ export default function ItemView({
   }
 
   const pos = ghost ?? item;
-  const controlScale = 1 / scale;
+  // Corner controls (drag grip, resize handles, action cluster) are NOT
+  // counter-scaled — they scale naturally with the canvas so they stay
+  // proportional to the item at every zoom. Counter-scaling (1/scale) kept
+  // them a constant on-screen size, which meant that as you zoomed out the
+  // item shrank but the controls didn't, so they ballooned over the item
+  // ("huge and invisible" on hover). Letting them scale with the canvas keeps
+  // them always the same fraction of the item.
   const fixedControl = (x: string, y: string): React.CSSProperties => ({
     left: x,
     top: y,
-    transform: `scale(${controlScale}) translate(-50%, -50%)`,
-    transformOrigin: 'top left',
+    transform: 'translate(-50%, -50%)',
     zIndex: 60,
   });
 
@@ -315,12 +326,17 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
+  // Only enable the hover controls (grip/resize handles) once the canvas is
+  // zoomed in enough for them to be usable. Below this they'd be tiny and just
+  // clutter the item, so we drop the `group` class that drives group-hover.
+  const showHoverControls = scale >= CONTROL_MIN_ZOOM;
+
   return (
     <div
       data-item
       data-item-id={item.id}
       data-item-type={item.type}
-      className={`group absolute${
+      className={`${showHoverControls ? 'group' : ''} absolute${
         isMergeTarget ? ' animate-mergeGlow' : selected ? ' animate-itemWiggle' : ''
       }`}
       style={{
@@ -1159,21 +1175,12 @@ function ImageBox({
         />
       )}
 
-      {/* AI controls live in a single bottom-left anchored layer that
-          counter-scales with the canvas zoom so the button and prompt bar
-          stay readable when zoomed out and don't bloat when zoomed in.
-          The counter-scale is clamped so on a tiny image the controls
-          don't overflow it, and on a huge image they don't shrink away. */}
+      {/* AI controls live in a single bottom-left anchored layer that scales
+          naturally with the canvas zoom — no counter-scaling — so it stays
+          proportional to the image and never balloons over it when zoomed
+          out. */}
       {selected && (() => {
-        // Roughly: keep on-screen UI ~constant via 1/scale, but allow it to
-        // grow on big images (so the AI button isn't a speck on a 2000px
-        // image) and never exceed ~25% of the image's smallest side.
-        const inv = 1 / view.scale;
-        const imageMin = Math.min(item.w, item.h);
-        const imageBoost = Math.max(1, Math.min(2.4, imageMin / 220));
-        const raw = inv * imageBoost;
-        const maxByImage = imageMin / 100; // 100 = base button design width-ish
-        const uiScale = Math.max(0.7, Math.min(raw, Math.max(0.7, maxByImage)));
+        const uiScale = 1;
         return (
       <div
         className="absolute z-20"
