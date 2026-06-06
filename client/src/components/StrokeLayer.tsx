@@ -106,7 +106,10 @@ export default function StrokeLayer({
 
   function onDown(e: React.PointerEvent) {
     if (!drawMode) return;
-    if (penOnly && e.pointerType !== 'pen') return;
+    // Pencil-only: ignore finger/palm touches so a resting hand can't draw.
+    // Mouse and stylus still draw, so this is safe to leave on by default
+    // (a mouse user isn't locked out the way an `!== 'pen'` guard would do).
+    if (penOnly && e.pointerType === 'touch') return;
     e.stopPropagation();
     drawingRef.current = true;
     const { x, y } = toWorld(e.clientX, e.clientY);

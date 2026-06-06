@@ -48,7 +48,9 @@ export default function BoardPage() {
   const [eraserSize, setEraserSize] = useState<SizeKey>('md');
 
   const [penOnly, setPenOnly] = useState<boolean>(() => {
-    try { return localStorage.getItem('milart.penOnly') === '1'; } catch { return false; }
+    // Pencil-only (palm/finger rejection) defaults ON so a resting hand can't
+    // draw; only an explicit opt-out ('0') turns it off.
+    try { const v = localStorage.getItem('milart.penOnly'); return v === null ? true : v === '1'; } catch { return true; }
   });
 
   function togglePenOnly(v: boolean) {
@@ -744,18 +746,35 @@ export default function BoardPage() {
           onDrawHoldEnd={onDrawHoldEnd}
         />
 
+        {/* Pencil-only toggle — transparent, outline-only pill anchored top-left
+            while drawing. On = finger/palm touches are ignored. */}
+        {drawOpen && (
+          <button
+            onClick={() => togglePenOnly(!penOnly)}
+            title={penOnly ? 'Pencil only — finger touches are ignored. Click to allow finger drawing.' : 'Finger drawing allowed. Click for pencil-only.'}
+            className="absolute left-3 px-3 py-1.5 rounded-full border text-[12px] font-semibold transition-colors"
+            style={{
+              top: 58,
+              zIndex: 180000,
+              background: 'transparent',
+              color: penOnly ? '#D97435' : 'rgba(26,21,16,0.45)',
+              borderColor: penOnly ? '#D97435' : 'rgba(26,21,16,0.22)',
+            }}
+          >
+            {penOnly ? 'Pencil only on' : 'Pencil only off'}
+          </button>
+        )}
+
         <DrawTray
           open={drawOpen}
           drawTool={drawTool}
           penColor={drawColor}
           penSize={penSize}
           eraserSize={eraserSize}
-          penOnly={penOnly}
           onToolChange={setDrawTool}
           onColorChange={setDrawColor}
           onPenSizeChange={setPenSize}
           onEraserSizeChange={setEraserSize}
-          onPenOnlyChange={togglePenOnly}
           onClose={() => { setDrawOpen(false); setIsMove(true); }}
         />
       </div>

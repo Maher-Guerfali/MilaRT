@@ -9,12 +9,10 @@ interface Props {
   penColor: string;
   penSize: SizeKey;
   eraserSize: SizeKey;
-  penOnly: boolean;
   onToolChange: (t: DrawTool) => void;
   onColorChange: (c: string) => void;
   onPenSizeChange: (s: SizeKey) => void;
   onEraserSizeChange: (s: SizeKey) => void;
-  onPenOnlyChange: (v: boolean) => void;
   onClose: () => void;
 }
 
@@ -23,7 +21,7 @@ const PRESETS = ['#1a1510', '#D97435', '#E8B830', '#2a9d8f', '#e76f51', '#8b5cf6
 export default function DrawTray(props: Props) {
   if (!props.open) return null;
 
-  const { drawTool, penOnly } = props;
+  const { drawTool } = props;
   const activeSize = drawTool === 'eraser' ? props.eraserSize : props.penSize;
   const setActiveSize = drawTool === 'eraser' ? props.onEraserSizeChange : props.onPenSizeChange;
 
@@ -126,20 +124,6 @@ export default function DrawTray(props: Props) {
               </div>
             </>
           )}
-
-          {/* "Only pencil" (palm rejection) pill — far right */}
-          <Divider mx={[14, 10]} />
-          <button
-            onClick={() => props.onPenOnlyChange(!penOnly)}
-            title={penOnly ? 'Apple Pencil only — touch ignored' : 'Tap to enable Apple Pencil / stylus-only mode'}
-            className="flex-shrink-0 px-3 py-[6px] rounded-full border text-[11px] font-semibold transition-all cursor-pointer"
-            style={{
-              background: penOnly ? '#D97435' : 'transparent',
-              color: penOnly ? '#fff' : 'rgba(26,21,16,0.35)',
-              borderColor: penOnly ? '#D97435' : 'rgba(26,21,16,0.18)',
-              boxShadow: penOnly ? '0 0 0 3px rgba(217,116,53,0.22)' : 'none',
-            }}
-          >Only pencil</button>
         </div>
 
         {/* Close */}
