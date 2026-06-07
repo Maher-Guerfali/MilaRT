@@ -300,7 +300,10 @@ function Logo({ className }: { className?: string }) {
       src="/mypapr-logo.png"
       alt="Mypapr"
       className={className}
-      style={{ width: 'auto', objectFit: 'contain' }}
+      // The supplied logo art is white; the landing background is light, so
+      // invert() flips it to dark ink. (Pure-white-on-transparent → near-black,
+      // alpha preserved.)
+      style={{ width: 'auto', objectFit: 'contain', filter: 'invert(1)' }}
       onError={() => setFailed(true)}
     />
   );
