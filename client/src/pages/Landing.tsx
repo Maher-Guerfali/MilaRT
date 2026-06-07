@@ -385,34 +385,23 @@ export default function Landing() {
 
 // ── Small building blocks ──────────────────────────────────────────
 
-// Brand mark. Loads the committed logo at /mypapr-logo.png and falls back to
-// a text wordmark if it isn't present yet, so the page never shows a broken
-// image. The art is white, so invert() flips it to dark on the light page.
+// Brand mark — the "Mypapr" wordmark rendered in an elegant signature script
+// (Great Vibes), in dark ink so it reads on the light page. `height` controls
+// the visual cap-height; the font-size is scaled up because script faces have
+// a small x-height relative to their em.
 function Logo({ height = 32 }: { height?: number }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) {
-    return (
-      <span
-        className="select-none"
-        style={{
-          fontFamily: 'Georgia, "Times New Roman", serif',
-          fontStyle: 'italic',
-          fontWeight: 700,
-          fontSize: Math.round(height * 0.82),
-          lineHeight: 1,
-          letterSpacing: '-0.02em',
-          color: '#1A1510',
-        }}
-      >Mypapr</span>
-    );
-  }
   return (
-    <img
-      src="/mypapr-logo.png"
-      alt="Mypapr"
-      style={{ height, width: 'auto', objectFit: 'contain', filter: 'invert(1)' }}
-      onError={() => setFailed(true)}
-    />
+    <span
+      className="select-none inline-block"
+      aria-label="Mypapr"
+      style={{
+        fontFamily: '"Great Vibes", cursive',
+        fontWeight: 400,
+        fontSize: Math.round(height * 1.6),
+        lineHeight: 1,
+        color: '#1A1510',
+      }}
+    >Mypapr</span>
   );
 }
 
