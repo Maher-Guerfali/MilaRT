@@ -90,9 +90,11 @@ export function makeRoutes({ uploadDir }) {
   // ship it to Supabase or write it to disk.
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    limits: { fileSize: 25 * 1024 * 1024 }, // 25MB (covers large PDFs)
     fileFilter: (_req, file, cb) => {
-      if (!file.mimetype.startsWith('image/')) return cb(new Error('Only images allowed'));
+      if (!file.mimetype.startsWith('image/') && file.mimetype !== 'application/pdf') {
+        return cb(new Error('Only images and PDFs allowed'));
+      }
       cb(null, true);
     },
   });
@@ -266,7 +268,7 @@ export function makeRoutes({ uploadDir }) {
       return res.status(400).json({ error: 'missing items array' });
     }
 
-    const systemMessage = `You are an AI assistant for a canvas board app called MilaRT.
+    const systemMessage = `You are an AI assistant for a canvas board app called Mypapr.
 The board contains items positioned in a 2D world (pixel coordinates). Each item has:
 - id: unique string
 - type: "sticky" | "image" | "link" | "board"

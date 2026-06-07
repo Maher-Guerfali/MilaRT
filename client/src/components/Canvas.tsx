@@ -30,10 +30,17 @@ interface Props {
   onMoveLayer: (id: string, dir: 'forward' | 'backward') => void;
   onEnterBoard: (itemId: string) => void;
   onExportBoardHere?: (itemId: string) => void;
-  onSendToStorage?: (id: string) => void;
+  onSendToStorage?: (id: string) => void | Promise<void>;
   onRestoreFromStorageAt?: (id: string, x: number, y: number) => void;
   onMerge?: (srcId: string, targetId: string) => void;
+  /** Move the given items into the nested board referenced by boardItemId. */
+  onDropIntoBoard?: (srcIds: string[], boardItemId: string) => void;
   onOpenDocument?: (id: string) => void;
+  onOpenPaper?: (id: string) => void;
+  onCopyToStorage?: (url: string) => void;
+  onCreateBoardWithCover?: (url: string) => void;
+  freshItemId?: string | null;
+  onClearFresh?: (id: string) => void;
   /** Remote peers' cursors (rendered as an overlay). */
   peers?: Peer[];
   /** Called with the local cursor's world coords. Internally throttled. */
@@ -45,14 +52,18 @@ export interface CanvasHandle {
   /** World-space size of the visible viewport — used to size pasted/scanned
    *  content to roughly fit on screen instead of a fixed world-px constant. */
   getViewportWorld: () => { centerX: number; centerY: number; worldW: number; worldH: number };
+  /** Current canvas zoom scale (1 = 100%). */
+  getScale: () => number;
   /** Smoothly animate the camera so the given items fit (~70% default) the
    *  viewport. Used by the F shortcut and the per-item focus button. */
   focusOnIds: (ids: string[], opts?: { fit?: number; duration?: number }) => void;
+  /** Capture the current canvas viewport as a PNG data URL using html2canvas. */
+  captureViewport: () => Promise<string>;
 }
 
-const MIN_SCALE = 0.1;
-const MAX_SCALE = 4;
-const ZOOM_STEP = 1.45;
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 12;
+const ZOOM_STEP = 1.20;
 const SIZE_TO_PX: Record<SizeKey, number> = { sm: 2, md: 4, lg: 8 };
 
 function clampScale(s: number) {
@@ -73,7 +84,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     items, strokes, isMove, drawOpen, drawTool, drawColor, penSize, eraserSize, penOnly,
     onUpdate, onUpdateMany, onDelete, onDeleteMany, onAdd, onSetStrokes, onAddStroke, onMoveLayer, onEnterBoard,
     onExportBoardHere,
-    onSendToStorage, onRestoreFromStorageAt, onMerge, onOpenDocument,
+    onSendToStorage, onRestoreFromStorageAt, onMerge, onDropIntoBoard, onOpenDocument, onOpenPaper,
+    onCopyToStorage, onCreateBoardWithCover,
+    freshItemId, onClearFresh,
     peers, onLocalCursorMove,
   } = props;
 
@@ -82,11 +95,13 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
+  const [boardDropTargetId, setBoardDropTargetId] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [lassoPath, setLassoPath] = useState<[number, number][]>([]);
   const [lassoActive, setLassoActive] = useState(false);
   const panStart = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
+  const pinchingRef = useRef(false);
   // Cancels any focus animation in flight so a new F-press doesn't fight a
   // previous one mid-flight.
   const focusAnimRef = useRef<number | null>(null);
@@ -191,7 +206,20 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   useImperativeHandle(ref, () => ({
     getCenter: centerOfView,
     getViewportWorld: viewportWorld,
+    getScale: () => viewRef.current.scale,
     focusOnIds,
+    captureViewport: async () => {
+      const el = wrapRef.current;
+      if (!el) return '';
+      const { default: html2canvas } = await import('html2canvas');
+      const canvas = await html2canvas(el, {
+        backgroundColor: '#F3EDE0',
+        useCORS: true,
+        logging: false,
+        scale: Math.min(window.devicePixelRatio || 1, 2),
+      });
+      return canvas.toDataURL('image/png');
+    },
   }));
 
   // Track wrap size so the mini-map can draw the viewport rect accurately.
@@ -225,6 +253,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
     let cy = 0;
     function start(e: TouchEvent) {
       if (e.touches.length !== 2) return;
+      // Signal panning logic to stay off — touchstart fires before pointerdown
+      // on iOS so this flag is set before onBgPointerDown runs.
+      pinchingRef.current = true;
+      panStart.current = null;
       const t1 = e.touches[0], t2 = e.touches[1];
       startDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
       cx = (t1.clientX + t2.clientX) / 2;
@@ -245,7 +277,10 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       e.preventDefault();
     }
     function end(e: TouchEvent) {
-      if (e.touches.length < 2) active = false;
+      if (e.touches.length < 2) {
+        active = false;
+        pinchingRef.current = false;
+      }
     }
     el.addEventListener('touchstart', start, { passive: false });
     el.addEventListener('touchmove', move, { passive: false });
@@ -285,6 +320,9 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   function onBgPointerDown(e: React.PointerEvent) {
     if (drawOpen && drawTool !== 'select') return;
     if ((e.target as HTMLElement).closest('[data-item]')) return;
+    // On iPad, two-finger pinch fires touchstart (→ sets pinchingRef) before
+    // the first finger's pointerdown. Bail out so pan and pinch don't fight.
+    if (pinchingRef.current) return;
 
     if (inSelectMode) {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -382,15 +420,32 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
   }, []);
 
   function placeImageNow(url: string, cx: number, cy: number, defaultW = 218, defaultH = 148) {
+    const s = viewRef.current.scale;
+    const w = defaultW / s;
+    const h = defaultH / s;
     onAdd({
       id: nanoid(10),
       type: 'image',
-      x: cx - defaultW / 2,
-      y: cy - defaultH / 2,
-      w: defaultW,
-      h: defaultH,
+      x: cx - w / 2,
+      y: cy - h / 2,
+      w, h,
       z: 0,
       data: { url },
+    });
+  }
+
+  function placePDFNow(url: string, name: string, size: number, cx: number, cy: number) {
+    const s = viewRef.current.scale;
+    const w = 220 / s;
+    const h = 144 / s;
+    onAdd({
+      id: nanoid(10),
+      type: 'pdf',
+      x: cx - w / 2,
+      y: cy - h / 2,
+      w, h,
+      z: 0,
+      data: { url, name, size },
     });
   }
 
@@ -415,27 +470,42 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       try {
         const template = JSON.parse(itemJson) as Omit<BaseItem, 'x' | 'y'>;
         const pos = toWorld(e.clientX, e.clientY);
+        const s = viewRef.current.scale;
+        const w = template.w / s;
+        const h = template.h / s;
         onAdd({
           ...template,
-          x: pos.x - template.w / 2,
-          y: pos.y - template.h / 2,
+          w, h,
+          x: pos.x - w / 2,
+          y: pos.y - h / 2,
           z: 0,
         } as BaseItem);
       } catch { /* ignore bad data */ }
       return;
     }
 
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    const allFiles = Array.from(e.dataTransfer.files);
+    const imageFiles = allFiles.filter((f) => f.type.startsWith('image/'));
+    const pdfFiles = allFiles.filter((f) => f.type === 'application/pdf');
+    if (!imageFiles.length && !pdfFiles.length) return;
     const start = toWorld(e.clientX, e.clientY);
     let off = 0;
-    for (const file of files) {
+    for (const file of imageFiles) {
       try {
         const { url } = await api.uploadImage(file);
         placeImageNow(url, start.x + off, start.y + off);
         off += 30;
       } catch (err) {
         alert('Image upload failed: ' + (err as Error).message);
+      }
+    }
+    for (const file of pdfFiles) {
+      try {
+        const { url } = await api.uploadFile(file);
+        placePDFNow(url, file.name, file.size, start.x + off, start.y + off);
+        off += 30;
+      } catch (err) {
+        alert('PDF upload failed: ' + (err as Error).message);
       }
     }
   }
@@ -561,8 +631,13 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             strokes={strokes}
             view={view}
             isMergeTarget={mergeTargetId === it.id}
+            isBoardDropTarget={boardDropTargetId === it.id}
+            isFresh={freshItemId === it.id}
             onSelect={(additive) => selectItem(it.id, additive)}
-            onUpdate={(patch) => onUpdate(it.id, patch)}
+            onUpdate={(patch) => {
+              onUpdate(it.id, patch);
+              if (freshItemId === it.id) onClearFresh?.(it.id);
+            }}
             onMoveGroup={moveGroup}
             onDelete={() => onDelete(it.id)}
             onEnterBoard={() => onEnterBoard(it.id)}
@@ -570,8 +645,13 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
             onMoveLayer={onMoveLayer}
             onSendToStorage={onSendToStorage}
             onSetMergeTarget={setMergeTargetId}
+            onSetBoardDropTarget={setBoardDropTargetId}
             onMerge={onMerge}
+            onDropIntoBoard={onDropIntoBoard}
             onOpenDocument={onOpenDocument}
+            onOpenPaper={onOpenPaper}
+            onCopyToStorage={onCopyToStorage}
+            onCreateBoardWithCover={onCreateBoardWithCover}
           />
         ))}
       </div>

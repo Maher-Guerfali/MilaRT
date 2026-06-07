@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "html2canvas": "^1.4.1",
     "mammoth": "^1.12.0",
     "nanoid": "^5.0.9",
     "react": "^18.3.1",

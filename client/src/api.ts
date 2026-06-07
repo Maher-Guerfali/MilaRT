@@ -57,6 +57,14 @@ export const api = {
     return res.json();
   },
 
+  uploadFile: async (file: File): Promise<{ url: string }> => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+    return res.json();
+  },
+
   sendFeedback: (text: string) =>
     req<{ ok: true }>('/api/feedback', {
       method: 'POST',

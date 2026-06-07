@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
+import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, PDFData, PaperData, Stroke } from '../types';
 import { api } from '../api';
-import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon } from './icons';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon, PenIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -13,6 +13,9 @@ interface Props {
   strokes: Stroke[];
   view: { x: number; y: number; scale: number };
   isMergeTarget?: boolean;
+  /** True when this board item is the active drop target during a drag. */
+  isBoardDropTarget?: boolean;
+  isFresh?: boolean;
   onSelect: (additive: boolean) => void;
   onUpdate: (patch: Partial<BaseItem>) => void;
   onMoveGroup: (ids: string[], dx: number, dy: number) => void;
@@ -20,10 +23,20 @@ interface Props {
   onEnterBoard: () => void;
   onExportBoardHere?: () => void;
   onMoveLayer?: (id: string, dir: 'forward' | 'backward') => void;
-  onSendToStorage?: (id: string) => void;
+  onSendToStorage?: (id: string) => void | Promise<void>;
   onSetMergeTarget?: (id: string | null) => void;
   onMerge?: (srcId: string, targetId: string) => void;
   onOpenDocument?: (id: string) => void;
+  /** Open the full-screen draw-paper editor for a 'paper' item. */
+  onOpenPaper?: (id: string) => void;
+  /** Copy a generated image URL into storage without removing the canvas item. */
+  onCopyToStorage?: (url: string) => void;
+  /** Create a new board item with the given image as cover, near canvas centre. */
+  onCreateBoardWithCover?: (url: string) => void;
+  /** Live drop-target highlight on a board element while dragging. */
+  onSetBoardDropTarget?: (id: string | null) => void;
+  /** Drop dragged items inside the given board (deferred to BoardPage). */
+  onDropIntoBoard?: (srcIds: string[], boardItemId: string) => void;
 }
 
 function youTubeId(raw: string): string | null {
@@ -44,11 +57,17 @@ function youTubeId(raw: string): string | null {
 
 export default function ItemView({
   item, selected, selectionIds, scale, interactive, strokes, view,
-  isMergeTarget,
+  isMergeTarget, isBoardDropTarget, isFresh,
   onSelect, onUpdate, onMoveGroup, onDelete, onEnterBoard, onExportBoardHere, onMoveLayer,
-  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument,
+  onSendToStorage, onSetMergeTarget, onMerge, onOpenDocument, onOpenPaper,
+  onCopyToStorage, onCreateBoardWithCover,
+  onSetBoardDropTarget, onDropIntoBoard,
 }: Props) {
   const mergeTargetIdRef = useRef<string | null>(null);
+  // Per-drag bookkeeping for the board hover-grow feature.
+  const boardDropRef = useRef<{ current: string | null; visited: Set<string> }>(
+    { current: null, visited: new Set() }
+  );
   // Drag-tracking. `wasSelected` records whether the item was already
   // selected at press time, which lets endDrag distinguish "this press
   // just selected the item" from "this press is a click-to-activate".
@@ -75,6 +94,10 @@ export default function ItemView({
   // the parent. Resets whenever the item is deselected.
   const [editing, setEditing] = useState(false);
   useEffect(() => { if (!selected) setEditing(false); }, [selected]);
+
+  // Pressing a still-shaking (fresh) item fades it so you can see what's
+  // underneath while you reposition it.
+  const [pressed, setPressed] = useState(false);
 
   // Right-click context menu (currently only used for image items).
   // Coordinates are in viewport space — the menu is portalled at fixed pos.
@@ -110,6 +133,19 @@ export default function ItemView({
       if (!id || id === excludeId) continue;
       const t = itemEl.getAttribute('data-item-type');
       if (t === 'sticky' || t === 'link') return id;
+    }
+    return null;
+  }
+
+  function findBoardTargetAt(clientX: number, clientY: number, excludeIds: string[]): string | null {
+    const els = document.elementsFromPoint(clientX, clientY);
+    for (const el of els) {
+      const itemEl = (el as HTMLElement).closest('[data-item-id]') as HTMLElement | null;
+      if (!itemEl) continue;
+      const id = itemEl.getAttribute('data-item-id');
+      if (!id || excludeIds.includes(id)) continue;
+      const t = itemEl.getAttribute('data-item-type');
+      if (t === 'board') return id;
     }
     return null;
   }
@@ -175,6 +211,25 @@ export default function ItemView({
           onSetMergeTarget(target);
         }
       }
+      // Hover-into-board: while dragging anything (except a board onto
+      // itself), the first time we hover a given board element it grows.
+      if (d.moved && onSetBoardDropTarget && item.type !== 'board') {
+        const excludeIds = selectionIds.length ? selectionIds : [item.id];
+        const target = findBoardTargetAt(e.clientX, e.clientY, excludeIds);
+        const state = boardDropRef.current;
+        if (target) {
+          if (state.visited.has(target)) {
+            if (state.current !== null) { state.current = null; onSetBoardDropTarget(null); }
+          } else if (state.current !== target) {
+            state.current = target;
+            onSetBoardDropTarget(target);
+          }
+        } else if (state.current) {
+          state.visited.add(state.current);
+          state.current = null;
+          onSetBoardDropTarget(null);
+        }
+      }
       return;
     }
 
@@ -224,10 +279,10 @@ export default function ItemView({
     // send the item there instead of committing the move.
     let droppedToStorage = false;
     if (d.mode === 'move' && d.moved && onSendToStorage &&
-        (item.type === 'image' || item.type === 'link')) {
+        (item.type === 'image' || item.type === 'link' || item.type === 'board' || item.type === 'pdf')) {
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       if (el?.closest('[data-storage-drop="true"]')) {
-        onSendToStorage(item.id);
+        void onSendToStorage(item.id);
         droppedToStorage = true;
       }
     }
@@ -244,7 +299,19 @@ export default function ItemView({
     mergeTargetIdRef.current = null;
     onSetMergeTarget?.(null);
 
-    if (!droppedToStorage && !mergedAway) {
+    // Drop-into-board: only if we released while the grow effect was still active.
+    let droppedIntoBoard = false;
+    const boardDrop = boardDropRef.current.current;
+    if (!droppedToStorage && !mergedAway && d.mode === 'move' && d.moved &&
+        boardDrop && onDropIntoBoard) {
+      const ids = selectionIds.length > 0 ? selectionIds : [item.id];
+      onDropIntoBoard(ids, boardDrop);
+      droppedIntoBoard = true;
+    }
+    boardDropRef.current = { current: null, visited: new Set() };
+    onSetBoardDropTarget?.(null);
+
+    if (!droppedToStorage && !mergedAway && !droppedIntoBoard) {
       if (d.mode === 'move') {
         onUpdate({ x: finalBox.x, y: finalBox.y });
       } else {
@@ -288,17 +355,19 @@ export default function ItemView({
         setEditing(true);
       } else if (item.type === 'document' && onOpenDocument) {
         onOpenDocument(item.id);
+      } else if (item.type === 'paper' && onOpenPaper) {
+        onOpenPaper(item.id);
       }
     }
   }
 
   const pos = ghost ?? item;
-  const controlScale = 1 / scale;
+  // Corner controls: no counter-scaling — they scale naturally with the canvas
+  // so they're always proportional to the item and never inflate its visual size.
   const fixedControl = (x: string, y: string): React.CSSProperties => ({
     left: x,
     top: y,
-    transform: `scale(${controlScale}) translate(-50%, -50%)`,
-    transformOrigin: 'top left',
+    transform: 'translate(-50%, -50%)',
     zIndex: 60,
   });
 
@@ -315,13 +384,18 @@ export default function ItemView({
   const inImageExtend = item.type === 'image' &&
     !!(item.data as { imgFrame?: unknown }).imgFrame;
 
+  // Show hover controls when the canvas is zoomed in enough for them to be usable.
+  const showHoverControls = scale >= 0.5;
+
   return (
     <div
       data-item
       data-item-id={item.id}
       data-item-type={item.type}
-      className={`group absolute${
-        isMergeTarget ? ' animate-mergeGlow' : selected ? ' animate-itemWiggle' : ''
+      className={`${showHoverControls ? 'group' : ''} absolute${
+        isMergeTarget ? ' animate-mergeGlow' :
+        isFresh && !selected ? ' animate-newItemShake' :
+        selected ? ' animate-itemWiggle' : ''
       }`}
       style={{
         left: pos.x, top: pos.y, width: pos.w, height: pos.h,
@@ -329,23 +403,34 @@ export default function ItemView({
         zIndex: isMergeTarget ? 99999 : selected ? 100000 + (item.z ?? 0) : item.z ?? 0,
         filter: !isMergeTarget && selected
           ? 'drop-shadow(0 8px 16px rgba(26,21,16,0.22)) drop-shadow(0 2px 5px rgba(26,21,16,0.14))'
-          : undefined,
+          : isBoardDropTarget
+            ? 'drop-shadow(0 10px 26px rgba(217,116,53,0.45))'
+            : undefined,
+        transform: isBoardDropTarget ? 'scale(1.06)' : undefined,
+        transformOrigin: 'center center',
+        transition: 'transform 0.15s ease-out, opacity 0.12s ease-out',
+        opacity: isFresh && pressed ? 0.2 : 1,
       }}
+      onPointerLeave={() => { setPressed(false); }}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
+        if (isFresh) setPressed(true);
         if (!canDragFrom(e.target)) return;
         startDrag(e, 'move');
       }}
       onPointerMove={onDrag}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onPointerUp={(e) => { setPressed(false); endDrag(e); }}
+      onPointerCancel={(e) => { setPressed(false); endDrag(e); }}
       onContextMenu={(e) => {
         if (item.type === 'image') {
           const url = (item.data as Partial<ImageData>).url;
           if (!url) return;
         } else if (item.type === 'board') {
-          // Only show board menu if we have something to do.
           if (!onExportBoardHere) return;
+        } else if (item.type === 'link') {
+          const d = item.data as Partial<LinkData>;
+          const txt = (d.title || d.url || '').toString().trim();
+          if (!txt) return;
         } else {
           return;
         }
@@ -359,14 +444,23 @@ export default function ItemView({
         <Sticky item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
       {item.type === 'image' && (
-        <ImageBox item={item} selected={selected} strokes={strokes} view={view} liveFrame={liveFrame} onUpdate={onUpdate} />
+        <ImageBox item={item} selected={selected} strokes={strokes} view={view} liveFrame={liveFrame} onUpdate={onUpdate}
+          onCopyToStorage={onCopyToStorage}
+          onCreateBoardWithCover={onCreateBoardWithCover}
+        />
       )}
       {item.type === 'link' && (
         <TextOrLink item={item} selected={selected} editing={editing} liveTextScale={liveTextScale} onDoneEditing={() => setEditing(false)} onUpdate={onUpdate} />
       )}
-      {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} />}
+      {item.type === 'board' && <BoardRefBox item={item} selected={selected} onUpdate={onUpdate} onEnterBoard={onEnterBoard} scale={scale} />}
       {item.type === 'document' && (
         <DocumentBox item={item} selected={selected} onOpen={() => onOpenDocument?.(item.id)} />
+      )}
+      {item.type === 'pdf' && (
+        <PDFBox item={item} selected={selected} />
+      )}
+      {item.type === 'paper' && (
+        <PaperBox item={item} selected={selected} onOpen={() => onOpenPaper?.(item.id)} />
       )}
 
       {/* Drag grip — fixed screen size even while the canvas is zoomed.
@@ -433,10 +527,10 @@ export default function ItemView({
               </svg>
             </button>
           )}
-          {(item.type === 'image' || item.type === 'link') && onSendToStorage && (
+          {(item.type === 'image' || item.type === 'link' || item.type === 'board' || item.type === 'pdf') && onSendToStorage && (
             <button
               onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onSendToStorage(item.id); }}
+              onClick={(e) => { e.stopPropagation(); void onSendToStorage(item.id); }}
               title="Send to storage"
               className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
             >
@@ -514,6 +608,15 @@ export default function ItemView({
           onClose={() => setCtxMenu(null)}
           onEnter={onEnterBoard}
           onExportHere={onExportBoardHere}
+          onDelete={onDelete}
+        />
+      )}
+      {ctxMenu && item.type === 'link' && (
+        <LinkContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          url={((item.data as Partial<LinkData>).title || (item.data as Partial<LinkData>).url || '').toString().trim()}
+          onClose={() => setCtxMenu(null)}
           onDelete={onDelete}
         />
       )}
@@ -843,6 +946,98 @@ function BoardContextMenu({
   );
 }
 
+function LinkContextMenu({
+  x, y, url, onClose, onDelete,
+}: {
+  x: number; y: number; url: string;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+  const isUrl = /^https?:\/\/\S+$/i.test(url);
+  const ytId = isUrl ? youTubeId(url) : null;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let nx = x, ny = y;
+    if (nx + rect.width + pad > window.innerWidth) nx = window.innerWidth - rect.width - pad;
+    if (ny + rect.height + pad > window.innerHeight) ny = window.innerHeight - rect.height - pad;
+    if (nx !== x || ny !== y) setPos({ x: Math.max(pad, nx), y: Math.max(pad, ny) });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function run(action: () => void | Promise<void>) {
+    return (e: React.MouseEvent) => { e.stopPropagation(); onClose(); void action(); };
+  }
+
+  const copyLinkIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+    </svg>
+  );
+
+  const entries: Array<{ label: string; icon: ReactNode; action: () => void | Promise<void>; danger?: boolean; disabled?: boolean }> = [
+    {
+      label: ytId ? 'Copy YouTube link' : (isUrl ? 'Copy URL' : 'Copy text'),
+      icon: copyLinkIcon,
+      action: async () => { await copyToClipboard(url); },
+      disabled: !url,
+    },
+    ...(isUrl ? [{
+      label: 'Open in new tab',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+      ),
+      action: () => { window.open(url, '_blank', 'noopener,noreferrer'); },
+    }] : []),
+    {
+      label: 'Delete',
+      icon: <TrashIcon size={14} />,
+      action: onDelete,
+      danger: true,
+    },
+  ];
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-no-item-drag
+      onPointerDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+      className="fixed z-[100000] min-w-[180px] py-1 rounded-xl text-[12px] text-ink"
+      style={{
+        left: pos.x, top: pos.y,
+        background: 'rgba(253,250,245,0.98)',
+        border: '1px solid rgba(26,21,16,0.10)',
+        boxShadow: '0 10px 28px rgba(26,21,16,0.18), 0 2px 6px rgba(26,21,16,0.10)',
+        backdropFilter: 'blur(6px)',
+      }}
+    >
+      {entries.map((it, i) => (
+        <button
+          key={i}
+          disabled={it.disabled}
+          onClick={run(it.action)}
+          className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-ink/[0.06] disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          style={it.danger ? { color: '#C0392B' } : undefined}
+        >
+          <span className="w-4 h-4 flex items-center justify-center shrink-0">{it.icon}</span>
+          <span className="flex-1">{it.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
 function ResizeHandle({
   corner, selected, style, onStart, onMove, onEnd,
 }: {
@@ -937,12 +1132,14 @@ function Sticky({
 type ImgFrame = { x: number; y: number; w: number; h: number };
 
 function ImageBox({
-  item, selected, strokes, view, liveFrame, onUpdate,
+  item, selected, strokes, view, liveFrame, onUpdate, onCopyToStorage, onCreateBoardWithCover,
 }: {
   item: BaseItem; selected: boolean;
   strokes: Stroke[]; view: { x: number; y: number; scale: number };
   liveFrame?: ImgFrame;
   onUpdate: (p: Partial<BaseItem>) => void;
+  onCopyToStorage?: (url: string) => void;
+  onCreateBoardWithCover?: (url: string) => void;
 }) {
   const d = item.data as Partial<ImageData> & {
     versions?: string[];
@@ -1015,6 +1212,7 @@ function ImageBox({
     const nextData = { ...d, url, versions: newVersions };
     delete (nextData as Record<string, unknown>).imgFrame;
     onUpdate({ data: nextData });
+    onCopyToStorage?.(url);
     setAiOpen(false);
     setAiPrompt('');
     setAiRefs([]);
@@ -1168,12 +1366,7 @@ function ImageBox({
         // Roughly: keep on-screen UI ~constant via 1/scale, but allow it to
         // grow on big images (so the AI button isn't a speck on a 2000px
         // image) and never exceed ~25% of the image's smallest side.
-        const inv = 1 / view.scale;
-        const imageMin = Math.min(item.w, item.h);
-        const imageBoost = Math.max(1, Math.min(2.4, imageMin / 220));
-        const raw = inv * imageBoost;
-        const maxByImage = imageMin / 100; // 100 = base button design width-ish
-        const uiScale = Math.max(0.7, Math.min(raw, Math.max(0.7, maxByImage)));
+        const uiScale = 1;
         return (
       <div
         className="absolute z-20"
@@ -1193,7 +1386,7 @@ function ImageBox({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); setAiOpen((o) => !o); }}
           title="Edit with AI"
-          className="w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all"
+          className="w-7 h-7 rounded-full flex items-center justify-center shadow-md transition-all opacity-40 hover:opacity-100"
           style={{
             background: aiOpen ? '#D97435' : 'rgba(253,250,245,0.95)',
             color: aiOpen ? 'white' : '#D97435',
@@ -1356,15 +1549,26 @@ function ImageBox({
           </div>
           <div className="grid grid-cols-2 gap-1.5 flex-1 min-h-0">
             {aiVariants.map((u, i) => (
-              <button
-                key={i}
-                onClick={() => commitAIResult(u)}
-                title={`Pick variant ${i + 1}`}
-                className="relative rounded-lg overflow-hidden ring-1 ring-white/20 hover:ring-2 hover:ring-[#D97435] transition-all"
-              >
-                <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
-                <span className="absolute bottom-1 right-1 px-1.5 py-[1px] rounded bg-ink/70 text-white text-[9px] font-bold pointer-events-none">{i + 1}</span>
-              </button>
+              <div key={i} className="relative flex flex-col gap-0.5">
+                <button
+                  onClick={() => commitAIResult(u)}
+                  title={`Use variant ${i + 1}`}
+                  className="relative flex-1 rounded-lg overflow-hidden ring-1 ring-white/20 hover:ring-2 hover:ring-[#D97435] transition-all"
+                >
+                  <img src={u} alt="" className="w-full h-full object-cover pointer-events-none" />
+                  <span className="absolute bottom-1 right-1 px-1.5 py-[1px] rounded bg-ink/70 text-white text-[9px] font-bold pointer-events-none">{i + 1}</span>
+                </button>
+                {/* Per-variant actions */}
+                {onCreateBoardWithCover && (
+                  <button
+                    onClick={() => { onCreateBoardWithCover(u); setAiVariants([]); }}
+                    title="Make a book board with this as the cover"
+                    className="w-full flex items-center justify-center gap-1 px-1.5 py-[3px] rounded text-[9px] font-semibold text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                  >
+                    <BookCoverIcon size={9} /> Book cover
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -1588,7 +1792,7 @@ async function captureItemWithStrokes(
 
 function AIBrushIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.636 5.636l2.122 2.122M16.243 16.243l2.121 2.121M5.636 18.364l2.122-2.121M16.243 7.757l2.121-2.121" />
     </svg>
@@ -1608,6 +1812,25 @@ function TextOrLink({
   const ytId = isUrl ? youTubeId(txt.trim()) : null;
   const baseFS = d.fontSize ?? 16;
   const fontSize = baseFS * liveTextScale;
+  const [ytCopied, setYtCopied] = useState(false);
+  const isBoldForMeasure = d.bold !== false;
+  const measureRef = useRef<HTMLDivElement>(null);
+
+  // Auto-size plain-text link items to tightly wrap their content.
+  // Only fires when text or font changes — NOT when w/h change — to avoid loops.
+  useLayoutEffect(() => {
+    if (editing || isUrl || !txt.trim()) return;
+    const el = measureRef.current;
+    if (!el) return;
+    const sw = el.scrollWidth;
+    const sh = el.scrollHeight;
+    const newW = Math.min(sw + 4, 520);
+    const newH = sh + 4;
+    if (Math.abs(newW - item.w) > 3 || Math.abs(newH - item.h) > 3) {
+      onUpdate({ w: newW, h: newH });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txt, baseFS, isBoldForMeasure, editing, isUrl]);
 
   if (editing) {
     return (
@@ -1628,7 +1851,7 @@ function TextOrLink({
   if (ytId) {
     return (
       <div
-        className="w-full h-full rounded-2xl overflow-hidden"
+        className="w-full h-full rounded-2xl overflow-hidden relative group/yt"
         style={{
           boxShadow: selected ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)' : '0 2px 10px rgba(26,21,16,0.09)',
           background: '#000',
@@ -1642,6 +1865,38 @@ function TextOrLink({
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
         />
+        {/* Copy-link button — floats over the top-right of the video on hover */}
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={async (e) => {
+            e.stopPropagation();
+            const ok = await copyToClipboard(txt.trim());
+            if (ok) { setYtCopied(true); setTimeout(() => setYtCopied(false), 1600); }
+          }}
+          className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-all opacity-0 group-hover/yt:opacity-100"
+          style={{
+            background: ytCopied ? 'rgba(60,180,100,0.92)' : 'rgba(26,21,16,0.72)',
+            color: '#fff',
+            backdropFilter: 'blur(4px)',
+            pointerEvents: 'auto',
+          }}
+          title="Copy YouTube link"
+        >
+          {ytCopied ? (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+              Copied!
+            </>
+          ) : (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" /><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+              </svg>
+              Copy link
+            </>
+          )}
+        </button>
       </div>
     );
   }
@@ -1667,28 +1922,53 @@ function TextOrLink({
   const fontWeight = isBold ? 700 : 400;
 
   return (
-    <div
-      className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
-      style={{
-        fontSize,
-        fontWeight,
-        lineHeight: 1.45,
-        letterSpacing: '-0.2px',
-        boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
-      }}
-    >
-      {txt || <span className="text-ink/50 italic font-medium">Click to select, click again to type…</span>}
-    </div>
+    <>
+      {/* Hidden measurement div — renders at base font size (no liveTextScale)
+          so we measure the real persisted size, not the transient drag preview. */}
+      <div
+        ref={measureRef}
+        aria-hidden
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: '-9999px',
+          visibility: 'hidden',
+          pointerEvents: 'none',
+          whiteSpace: 'pre-wrap',
+          fontSize: baseFS,
+          fontWeight,
+          lineHeight: 1.45,
+          letterSpacing: '-0.2px',
+          padding: '6px',
+          maxWidth: 520,
+          zIndex: -1,
+        }}
+      >{txt || ' '}</div>
+      <div
+        className="w-full h-full text-ink whitespace-pre-wrap cursor-text rounded-lg p-1.5"
+        style={{
+          fontSize,
+          fontWeight,
+          lineHeight: 1.45,
+          letterSpacing: '-0.2px',
+          boxShadow: selected ? '0 0 0 2px #D97435' : 'none',
+        }}
+      >
+        {txt || <span className="text-ink/50 italic font-medium">Click to select, click again to type…</span>}
+      </div>
+    </>
   );
 }
 
+// ── Book-styled board component ────────────────────────────────────────────
+const SPINE_W = 13;
+
 function BoardRefBox({
   item, selected, onUpdate, onEnterBoard,
-}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void }) {
+}: { item: BaseItem; selected: boolean; onUpdate: (p: Partial<BaseItem>) => void; onEnterBoard: () => void; scale?: number }) {
   const d = item.data as Partial<BoardRefData>;
   const fileRef = useRef<HTMLInputElement>(null);
   const [hov, setHov] = useState(false);
-  const highlight = selected;
 
   async function uploadCover(file: File) {
     try {
@@ -1699,85 +1979,164 @@ function BoardRefBox({
     }
   }
 
+  const coverBg = d.imageUrl ? undefined : 'linear-gradient(160deg, #e8e2d8 0%, #f5f0e8 45%, #ede6dc 100%)';
+
   return (
     <div
       className="w-full h-full flex flex-col items-center"
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
     >
+      {/* ── Book body ── */}
       <div
-        className="w-full flex-1 min-h-0 rounded-[18px] flex items-center justify-center relative overflow-hidden transition-all"
+        className="w-full flex-1 min-h-0 relative flex"
         style={{
-          background: '#FDFAF5',
-          border: `2px solid ${highlight ? '#D97435' : hov ? 'rgba(26,21,16,0.32)' : 'rgba(26,21,16,0.22)'}`,
-          boxShadow: highlight
-            ? '0 0 0 3px rgba(217,116,53,0.19)'
-            : hov ? '0 4px 18px rgba(26,21,16,0.10)' : '0 2px 8px rgba(26,21,16,0.06)',
+          borderRadius: '3px 8px 8px 3px',
+          overflow: 'hidden',
+          boxShadow: selected
+            ? `3px 8px 22px rgba(0,0,0,0.36), -2px 0 6px rgba(0,0,0,0.18), 0 0 0 2px #D97435`
+            : hov
+              ? '4px 10px 24px rgba(0,0,0,0.30), -2px 0 6px rgba(0,0,0,0.16)'
+              : '3px 7px 18px rgba(0,0,0,0.22), -1px 0 4px rgba(0,0,0,0.12)',
+          transition: 'box-shadow 0.18s ease',
         }}
       >
-        {d.imageUrl ? (
-          <img src={d.imageUrl} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
-        ) : (
-          <div className="text-ink/50">
-            <BoardIcon size={30} />
-          </div>
-        )}
-
-        {/* Enter-board arrow — always visible, gets orange bg when selected */}
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onEnterBoard(); }}
-          title="Open board"
-          className="absolute bottom-2 right-2 w-6 h-6 rounded-full flex items-center justify-center text-[13px] z-10 transition-all"
-          style={{
-            background: selected ? '#D97435' : 'transparent',
-            color: selected ? '#fff' : 'rgba(26,21,16,0.45)',
-            boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.35)' : 'none',
-            lineHeight: 1,
-          }}
-        >→</button>
-
+        {/* Spine */}
         <div
-          className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-[3px] rounded-md text-[9px] font-bold uppercase tracking-[0.05em] pointer-events-none"
           style={{
-            background: 'rgba(253,250,245,0.92)',
-            color: '#1A1510',
-            backdropFilter: 'blur(6px)',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.10)',
+            width: SPINE_W,
+            minWidth: SPINE_W,
+            flexShrink: 0,
+            background: 'linear-gradient(to right, rgba(10,8,5,0.55) 0%, rgba(10,8,5,0.28) 60%, rgba(10,8,5,0.08) 100%)',
+            zIndex: 3,
+            position: 'relative',
           }}
         >
-          <BoardIcon size={10} />
-          <span>Board</span>
+          {/* Spine highlight line */}
+          <div style={{
+            position: 'absolute', top: 0, right: 1, bottom: 0, width: 1,
+            background: 'linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 100%)',
+          }} />
         </div>
 
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
-          className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-white/90 shadow ring-1 ring-ink/10 flex items-center justify-center text-ink/70 hover:text-ink opacity-0 group-hover:opacity-100"
-          title="Set thumbnail"
-        ><CameraIcon size={14} /></button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = '';
-            if (f) uploadCover(f);
-          }}
-        />
+        {/* Cover face */}
+        <div
+          className="flex-1 relative overflow-hidden"
+          style={{ background: coverBg }}
+        >
+          {d.imageUrl && (
+            <img
+              src={d.imageUrl}
+              alt=""
+              draggable={false}
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            />
+          )}
+
+          {/* Default cover — no image */}
+          {!d.imageUrl && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="opacity-30">
+                <BookCoverIcon size={36} />
+              </div>
+            </div>
+          )}
+
+          {/* Page-edge sheen on the right */}
+          <div style={{
+            position: 'absolute', top: 0, right: 0, bottom: 0, width: 5,
+            background: 'linear-gradient(to left, rgba(255,255,255,0.55) 0%, transparent 100%)',
+            zIndex: 2, pointerEvents: 'none',
+          }} />
+
+          {/* Top-right camera button */}
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+            className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/40 text-white/90 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-black/60 transition-all z-10"
+            title="Set book cover image"
+          ><CameraIcon size={13} /></button>
+
+          {/* Enter button */}
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onEnterBoard(); }}
+            title="Open board"
+            className="absolute bottom-2 right-2 w-7 h-7 rounded-full flex items-center justify-center text-[14px] z-10 transition-all"
+            style={{
+              background: selected ? '#D97435' : 'rgba(0,0,0,0.40)',
+              color: '#fff',
+              backdropFilter: 'blur(4px)',
+              boxShadow: selected ? '0 2px 8px rgba(217,116,53,0.45)' : '0 1px 4px rgba(0,0,0,0.25)',
+            }}
+          >→</button>
+
+          {/* "Board" badge — bottom left */}
+          <div
+            className="absolute bottom-2 left-2 flex items-center gap-1 px-1.5 py-[3px] rounded text-[8px] font-bold uppercase tracking-[0.06em] pointer-events-none z-10"
+            style={{
+              background: 'rgba(0,0,0,0.42)',
+              color: 'rgba(255,255,255,0.88)',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            <BoardIcon size={8} />
+            <span>Board</span>
+          </div>
+        </div>
       </div>
 
+      {/* Book title below the book */}
       <input
-        className="w-full mt-[7px] bg-transparent text-[12px] font-bold text-ink text-center focus:outline-none rounded-md px-1 py-0.5 hover:bg-white/50 focus:bg-white/80"
+        className="w-full mt-[6px] bg-transparent text-[11px] font-bold text-ink text-center focus:outline-none rounded-md px-1 py-0.5 hover:bg-white/50 focus:bg-white/80"
         value={d.name ?? ''}
         placeholder="Board name"
         onChange={(e) => onUpdate({ data: { ...d, name: e.target.value } })}
         onPointerDown={(e) => e.stopPropagation()}
       />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) uploadCover(f);
+        }}
+      />
     </div>
   );
+}
+
+function BookCoverIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2h13a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
+      <line x1="4" y1="2" x2="4" y2="22" strokeWidth="3" stroke="currentColor" opacity="0.35" />
+    </svg>
+  );
+}
+
+function downloadDocAs(title: string, content: string, fmt: 'txt' | 'docx') {
+  let blob: Blob;
+  let filename: string;
+  if (fmt === 'txt') {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = content;
+    blob = new Blob([tmp.innerText], { type: 'text/plain' });
+    filename = `${title}.txt`;
+  } else {
+    // Word-compatible HTML saved as .doc — opens natively in Word/LibreOffice
+    const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>${title}</title></head><body>${content}</body></html>`;
+    blob = new Blob([html], { type: 'application/msword' });
+    filename = `${title}.docx`;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
 }
 
 function DocumentBox({
@@ -1785,6 +2144,9 @@ function DocumentBox({
 }: { item: BaseItem; selected: boolean; onOpen: () => void }) {
   const d = item.data as Partial<DocumentData>;
   const title = d.title || 'Untitled';
+  const [dlOpen, setDlOpen] = useState(false);
+  const content = d.content || '';
+
   return (
     <div
       className="w-full h-full rounded-2xl bg-white flex flex-col overflow-hidden"
@@ -1806,24 +2168,53 @@ function DocumentBox({
       <div
         className="flex-1 mt-1.5 mx-2 mb-2 rounded-md bg-ink/[0.03] px-2 py-1.5 text-[10px] leading-snug text-ink/65 overflow-hidden pointer-events-none"
         style={{ display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical' }}
-        // Sanitised content is produced inside DocumentEditor (mammoth /
-        // controlled execCommand) so rendering it here is safe.
         dangerouslySetInnerHTML={{
-          __html: d.content && d.content.trim()
-            ? d.content
+          __html: content.trim()
+            ? content
             : '<i style="color:rgba(26,21,16,0.35)">Empty — click to open</i>',
         }}
       />
-      <button
-        data-no-item-drag
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); onOpen(); }}
-        className="mb-2 mx-2 h-7 rounded-md text-[10.5px] font-bold transition-colors"
-        style={{
-          background: '#D97435',
-          color: '#fff',
-        }}
-      >Open</button>
+      <div className="mb-2 mx-2 flex gap-1.5 relative">
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="flex-1 h-7 rounded-md text-[10.5px] font-bold transition-colors"
+          style={{ background: '#D97435', color: '#fff' }}
+        >Open</button>
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); setDlOpen((v) => !v); }}
+          title="Download"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-ink/60 hover:text-ink border border-ink/10 bg-ink/[0.03] hover:bg-ink/[0.07] transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+        {dlOpen && (
+          <div
+            className="absolute bottom-full right-0 mb-1 rounded-xl border border-ink/10 bg-white shadow-lg overflow-hidden z-50"
+            style={{ minWidth: 110 }}
+          >
+            <button
+              data-no-item-drag
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); downloadDocAs(title, content, 'txt'); setDlOpen(false); }}
+              className="w-full text-left px-3 py-2 text-[12px] font-semibold hover:bg-ink/[0.05] transition-colors"
+            >.txt — Plain text</button>
+            <button
+              data-no-item-drag
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); downloadDocAs(title, content, 'docx'); setDlOpen(false); }}
+              className="w-full text-left px-3 py-2 text-[12px] font-semibold hover:bg-ink/[0.05] transition-colors"
+            >.docx — Word</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1856,29 +2247,219 @@ function TextFormatButtons({
     onUpdate({ data: { ...d, bold: !isBold } as Record<string, unknown> });
   }
 
-  const btnBase = 'w-[26px] h-[26px] rounded-full shadow ring-1 ring-ink/10 flex items-center justify-center text-[11px] font-bold';
+  const btnBase = 'h-[26px] rounded-full shadow ring-1 ring-ink/10 flex items-center justify-center font-bold transition-colors';
   return (
     <>
       <button
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); setFontSize(fs - 2); }}
-        title="Smaller text"
-        className={`${btnBase} bg-white text-ink`}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs - 3); }}
+        title={`Smaller text (${Math.round(fs - 3)}px)`}
+        className={`${btnBase} w-[26px] bg-white text-ink text-[11px] hover:bg-ink/10`}
       >A−</button>
+      <span
+        onPointerDown={(e) => e.stopPropagation()}
+        className="px-1.5 h-[26px] rounded-full shadow ring-1 ring-ink/10 bg-white flex items-center text-[10px] font-mono text-ink/70 select-none cursor-default"
+        title="Current font size"
+      >{Math.round(fs)}</span>
       <button
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); setFontSize(fs + 2); }}
-        title="Bigger text"
-        className={`${btnBase} bg-white text-ink`}
+        onClick={(e) => { e.stopPropagation(); setFontSize(fs + 3); }}
+        title={`Bigger text (${Math.round(fs + 3)}px)`}
+        className={`${btnBase} w-[26px] bg-white text-ink text-[11px] hover:bg-ink/10`}
       >A+</button>
       <button
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => { e.stopPropagation(); toggleBold(); }}
         title={isBold ? 'Remove bold' : 'Bold'}
-        // Inverted colours when active so users can see the toggle state.
-        className={`${btnBase} ${isBold ? 'bg-ink text-paper' : 'bg-white text-ink'}`}
+        className={`${btnBase} w-[26px] text-[13px] ${isBold ? 'bg-ink text-paper' : 'bg-white text-ink hover:bg-ink/10'}`}
         style={{ fontFamily: 'serif' }}
       >B</button>
     </>
+  );
+}
+
+// ── PDFBox ─────────────────────────────────────────────────────────────────
+function PDFBox({ item, selected }: { item: BaseItem; selected: boolean }) {
+  const d = item.data as Partial<PDFData>;
+  const url = d.url || '';
+  const name = d.name || 'document.pdf';
+  const size = d.size;
+
+  function formatSize(bytes?: number) {
+    if (!bytes) return null;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function openPDF() {
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  function downloadPDF(e: React.MouseEvent) {
+    e.stopPropagation();
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.target = '_blank'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  return (
+    <div
+      className="w-full h-full rounded-2xl overflow-hidden flex flex-col select-none"
+      style={{
+        background: '#fff',
+        border: `1.5px solid ${selected ? '#D97435' : 'rgba(26,21,16,0.12)'}`,
+        boxShadow: selected
+          ? '0 0 0 2px rgba(217,116,53,0.25), 0 4px 12px rgba(26,21,16,0.10)'
+          : '0 1px 4px rgba(26,21,16,0.08)',
+      }}
+    >
+      {/* Header strip */}
+      <div
+        className="flex items-center gap-2 px-3 py-2 shrink-0"
+        style={{ background: 'rgba(220,38,38,0.07)', borderBottom: '1px solid rgba(220,38,38,0.12)' }}
+      >
+        <PDFFileIcon />
+        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-red-700">PDF</span>
+      </div>
+
+      {/* File info — clicking opens the PDF */}
+      <div
+        className="flex-1 flex flex-col justify-center px-3 py-2 min-h-0 cursor-pointer hover:bg-ink/[0.03] transition-colors"
+        data-no-item-drag
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={openPDF}
+        title={`Open ${name}`}
+      >
+        <div className="text-[11.5px] font-semibold text-ink leading-snug line-clamp-2 break-all">{name}</div>
+        {size && <div className="text-[9.5px] text-ink/45 mt-0.5">{formatSize(size)}</div>}
+      </div>
+
+      {/* Action row */}
+      <div className="px-2.5 pb-2.5 flex gap-1.5 shrink-0">
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={openPDF}
+          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors hover:opacity-80"
+          style={{ background: 'rgba(220,38,38,0.09)', color: '#dc2626' }}
+          title="Open in browser"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+          Open
+        </button>
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={downloadPDF}
+          className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-colors hover:bg-ink/10"
+          style={{ background: 'rgba(26,21,16,0.05)', color: '#1A1510' }}
+          title="Download"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PDFFileIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+      <line x1="9" y1="17" x2="15" y2="17" />
+      <line x1="9" y1="9" x2="11" y2="9" />
+    </svg>
+  );
+}
+
+// ── PaperBox ───────────────────────────────────────────────────────────────
+// Small rectangle on the canvas representing a free-form drawing surface.
+// Renders a live mini-preview of its strokes; click to open the full editor.
+function PaperBox({ item, selected, onOpen }: { item: BaseItem; selected: boolean; onOpen: () => void }) {
+  const d = item.data as Partial<PaperData>;
+  const strokes = d.strokes ?? [];
+  const hasImages = (d.images?.length ?? 0) > 0;
+
+  // Compute a viewBox that fits all stroke points so the preview shows the
+  // actual drawing scaled into the card.
+  const box = (() => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of strokes) {
+      for (let i = 0; i < s.points.length; i += 3) {
+        const x = s.points[i], y = s.points[i + 1];
+        if (x < minX) minX = x; if (y < minY) minY = y;
+        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+      }
+    }
+    if (!isFinite(minX)) return null;
+    const pad = 12;
+    return { x: minX - pad, y: minY - pad, w: Math.max(1, maxX - minX + pad * 2), h: Math.max(1, maxY - minY + pad * 2) };
+  })();
+
+  function pathFor(s: Stroke) {
+    let p = '';
+    for (let i = 0; i < s.points.length; i += 3) {
+      p += (i === 0 ? 'M' : 'L') + s.points[i].toFixed(1) + ' ' + s.points[i + 1].toFixed(1);
+    }
+    return p;
+  }
+
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div
+        className="relative flex-1 min-h-0 w-full rounded-xl overflow-hidden group/paper"
+        style={{
+          background: '#FFFFFF',
+          border: `1.5px solid ${selected ? '#D97435' : 'rgba(26,21,16,0.14)'}`,
+          boxShadow: selected
+            ? '0 0 0 2px rgba(217,116,53,0.22), 0 4px 14px rgba(26,21,16,0.10)'
+            : '0 2px 8px rgba(26,21,16,0.07)',
+        }}
+      >
+        {/* Mini preview of the drawing */}
+        {box && (
+          <svg className="absolute inset-0 w-full h-full" viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`} preserveAspectRatio="xMidYMid meet">
+            {strokes.map((s, i) => (
+              <path key={i} d={pathFor(s)} stroke={s.color} strokeWidth={s.width} fill="none" strokeLinecap="round" strokeLinejoin="round" opacity={0.95} />
+            ))}
+          </svg>
+        )}
+
+        {/* Empty state */}
+        {!box && !hasImages && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-ink/35">
+            <PenIcon size={22} />
+            <span className="text-[10px] font-semibold">Tap to draw</span>
+          </div>
+        )}
+
+        {/* Open button — appears on hover or when selected */}
+        <button
+          data-no-item-drag
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          title="Open drawing paper"
+          className={`absolute inset-0 flex items-center justify-center transition-opacity ${selected ? 'opacity-100' : 'opacity-0 group-hover/paper:opacity-100'}`}
+          style={{ background: 'rgba(217,116,53,0.07)' }}
+        >
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold text-white" style={{ background: 'rgba(217,116,53,0.92)' }}>Open paper</span>
+        </button>
+
+        {/* Badge */}
+        <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-[3px] rounded text-[8px] font-bold uppercase tracking-[0.06em] pointer-events-none z-10"
+          style={{ background: 'rgba(253,250,245,0.92)', color: '#1A1510', backdropFilter: 'blur(4px)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+          <PenIcon size={9} /><span>Paper</span>
+        </div>
+      </div>
+    </div>
   );
 }

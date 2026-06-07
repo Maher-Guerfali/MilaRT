@@ -68,7 +68,7 @@ if (fs.existsSync(CLIENT_INDEX)) {
   // Helpful fallback so a misconfigured deploy doesn't just silently 404.
   app.get('/', (_req, res) => {
     res.status(500).type('html').send(`
-      <h1>MilaRT server is up, but the client build is missing</h1>
+      <h1>Mypapr server is up, but the client build is missing</h1>
       <p>Expected file: <code>${CLIENT_INDEX}</code></p>
       <p>This usually means the deploy build step didn't run. On Railway, check the build logs for <code>vite build</code>.</p>
       <p>See <a href="/api/_debug">/api/_debug</a> for the resolved paths.</p>
