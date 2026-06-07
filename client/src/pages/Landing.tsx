@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { loadIdentity, saveIdentity } from '../lib/identity';
@@ -30,6 +30,10 @@ function randomName(): string {
 type Tab = 'quick' | 'signin';
 type Mode = 'signin' | 'signup';
 
+function scrollToId(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 export default function Landing() {
   const nav = useNavigate();
 
@@ -49,6 +53,20 @@ export default function Landing() {
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  // ── Mobile nav ────────────────────────────────────────────────────
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // The canvas app sets `body { touch-action: none }` globally to stop the
+  // page from panning/bouncing while drawing. That also kills touch
+  // scrolling on this (scrollable) landing page, so relax it while mounted
+  // and restore it on the way out.
+  useEffect(() => {
+    const body = document.body;
+    const prev = body.style.touchAction;
+    body.style.touchAction = 'auto';
+    return () => { body.style.touchAction = prev; };
+  }, []);
 
   const trimmedRoom = room.trim();
 
@@ -113,10 +131,19 @@ export default function Landing() {
     } finally { setBusy(false); }
   }
 
+  function goSignIn() {
+    setMenuOpen(false);
+    setTab('signin');
+    setErr(null);
+    scrollToId('join');
+  }
+
   return (
     <div
-      className="min-h-screen font-sans text-ink flex flex-col board-bg"
+      id="top"
+      className="min-h-[100dvh] flex flex-col font-sans text-ink"
       style={{
+        backgroundColor: '#F3EDE0',
         backgroundImage:
           'radial-gradient(ellipse 70% 45% at 50% -10%, rgba(217,116,53,0.16), transparent 60%),' +
           'radial-gradient(ellipse 45% 30% at 88% 8%, rgba(232,184,48,0.12), transparent 70%),' +
@@ -124,173 +151,257 @@ export default function Landing() {
         backgroundSize: 'auto, auto, 24px 24px',
       }}
     >
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[420px] flex flex-col items-center animate-fadeUp">
-          {/* Brand — the logo IS the headline. */}
-          <Logo className="h-14 sm:h-16 mb-4" />
-          <p className="text-[15px] sm:text-[16px] text-ink/55 text-center leading-relaxed mb-8 max-w-[360px]">
-            An infinite sheet of paper for notes, sketches &amp; ideas — together.
-          </p>
+      {/* ── Top nav ─────────────────────────────────────────────── */}
+      <header className="relative z-30 max-w-6xl w-full mx-auto px-5 sm:px-6 pt-5 flex items-center justify-between">
+        <button onClick={() => scrollToId('top')} className="flex items-center" aria-label="Mypapr home">
+          <Logo height={30} />
+        </button>
 
-          {/* ── Join / sign-in card ─────────────────────────────── */}
+        {/* Desktop nav */}
+        <nav className="hidden sm:flex items-center gap-1 text-sm">
+          <button
+            onClick={() => scrollToId('how')}
+            className="px-3 py-2 text-ink/70 hover:text-ink rounded-lg"
+          >How it works</button>
+          <button
+            onClick={goSignIn}
+            className="ml-1 px-4 py-2 rounded-lg font-semibold border-2 border-ink/10 bg-paper hover:border-ink/20"
+          >Sign in</button>
+        </nav>
+
+        {/* Mobile hamburger */}
+        <button
+          onClick={() => setMenuOpen((o) => !o)}
+          className="sm:hidden w-10 h-10 -mr-1 rounded-lg flex items-center justify-center text-ink/70 hover:bg-ink/5"
+          aria-label="Menu"
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          ) : (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M3 6h18M3 12h18M3 18h18" />
+            </svg>
+          )}
+        </button>
+
+        {/* Mobile dropdown */}
+        {menuOpen && (
           <div
-            className="rounded-[24px] border border-ink/10 p-6 sm:p-7 w-full"
-            style={{ background: '#FDFAF5', boxShadow: '0 16px 50px rgba(26,21,16,0.10)' }}
+            className="sm:hidden absolute right-5 top-full mt-2 w-52 rounded-2xl border border-ink/10 p-1.5 flex flex-col z-40"
+            style={{ background: '#FDFAF5', boxShadow: '0 12px 32px rgba(26,21,16,0.14)' }}
           >
-            {/* Tabs */}
-            <div className="flex gap-1 p-1 rounded-xl bg-cream/80 border border-ink/10 mb-5">
-              <TabBtn active={tab === 'quick'} onClick={() => { setTab('quick'); setErr(null); }}>
-                Quick join
-              </TabBtn>
-              <TabBtn active={tab === 'signin'} onClick={() => { setTab('signin'); setErr(null); }}>
-                Sign in
-              </TabBtn>
-            </div>
+            <button
+              onClick={() => { setMenuOpen(false); scrollToId('how'); }}
+              className="text-left px-3 py-2.5 rounded-xl text-[14px] font-semibold text-ink/75 hover:bg-ink/5"
+            >How it works</button>
+            <button
+              onClick={goSignIn}
+              className="text-left px-3 py-2.5 rounded-xl text-[14px] font-semibold text-ink/75 hover:bg-ink/5"
+            >Sign in</button>
+          </div>
+        )}
+      </header>
 
-            {/* Room name (shared by both tabs) */}
-            <Field label="Room name">
-              <input
-                autoFocus
-                value={room}
-                onChange={(e) => setRoom(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && tab === 'quick') {
-                    if (e.shiftKey) handleCreate(); else handleJoin();
-                  }
-                }}
-                placeholder="Enter room name"
-                maxLength={30}
-                className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
-              />
-            </Field>
+      {/* ── Hero ────────────────────────────────────────────────── */}
+      <main className="flex-1 w-full">
+        <section className="max-w-6xl mx-auto px-5 sm:px-6 pt-8 sm:pt-14 pb-16 grid lg:grid-cols-2 gap-10 lg:gap-12 items-center">
+          {/* Left — story */}
+          <div className="animate-fadeUp">
+            <h1 className="text-[36px] sm:text-[50px] leading-[1.05] font-extrabold tracking-tight">
+              Think out loud,{' '}
+              <span style={{
+                background: 'linear-gradient(120deg, #D97435, #E8B830)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}>together.</span>
+            </h1>
+            <p className="mt-5 text-[16px] sm:text-[17px] text-ink/65 leading-relaxed max-w-[520px]">
+              Mypapr is an infinite sheet of paper for sticky notes, sketches, images and
+              docs. Drop a link, invite friends, and shape ideas together — no setup,
+              no accounts required.
+            </p>
 
-            {tab === 'quick' ? (
-              <>
-                <Field label="Your name">
-                  <input
-                    value={name}
-                    onChange={(e) => { setName(e.target.value); setNameIsCustom(true); }}
-                    maxLength={24}
-                    placeholder={randomDefault}
-                    className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
-                    style={{ color: nameIsCustom ? '#1A1510' : 'rgba(26,21,16,0.38)' }}
-                  />
-                </Field>
-                <div className="flex gap-2.5 mt-5">
+            {/* How it works — quick bullets */}
+            <ul id="how" className="mt-7 space-y-3 text-[15px] text-ink/75 scroll-mt-20">
+              <Bullet n={1}>Name a room — the name becomes your shareable link</Bullet>
+              <Bullet n={2}>Drop sticky notes, sketches, images, PDFs &amp; docs on the canvas</Bullet>
+              <Bullet n={3}>Invite anyone — see live cursors and edit together</Bullet>
+            </ul>
+          </div>
+
+          {/* Right — join / sign-in card */}
+          <div id="join" className="animate-fadeUp scroll-mt-20">
+            <div
+              className="rounded-[24px] border border-ink/10 p-6 sm:p-7 max-w-[460px] w-full mx-auto"
+              style={{ background: '#FDFAF5', boxShadow: '0 16px 50px rgba(26,21,16,0.10)' }}
+            >
+              {/* Tabs */}
+              <div className="flex gap-1 p-1 rounded-xl bg-cream/80 border border-ink/10 mb-5">
+                <TabBtn active={tab === 'quick'} onClick={() => { setTab('quick'); setErr(null); }}>
+                  Quick join
+                </TabBtn>
+                <TabBtn active={tab === 'signin'} onClick={() => { setTab('signin'); setErr(null); }}>
+                  Sign in
+                </TabBtn>
+              </div>
+
+              {/* Room name (shared by both tabs) */}
+              <Field label="Room name">
+                <input
+                  value={room}
+                  onChange={(e) => setRoom(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && tab === 'quick') {
+                      if (e.shiftKey) handleCreate(); else handleJoin();
+                    }
+                  }}
+                  placeholder="Enter room name"
+                  maxLength={30}
+                  className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
+                />
+              </Field>
+
+              {tab === 'quick' ? (
+                <>
+                  <Field label="Your name">
+                    <input
+                      value={name}
+                      onChange={(e) => { setName(e.target.value); setNameIsCustom(true); }}
+                      maxLength={24}
+                      placeholder={randomDefault}
+                      className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
+                      style={{ color: nameIsCustom ? '#1A1510' : 'rgba(26,21,16,0.38)' }}
+                    />
+                  </Field>
+                  <div className="flex gap-2.5 mt-5">
+                    <button
+                      onClick={handleJoin}
+                      disabled={busy}
+                      className="flex-1 py-[13px] rounded-xl text-white font-bold text-[15px] disabled:opacity-50 transition-transform active:scale-[0.99]"
+                      style={{
+                        background: 'linear-gradient(135deg, #D97435, #F08848)',
+                        boxShadow: '0 3px 16px rgba(217,116,53,0.40)',
+                      }}
+                    >Join room →</button>
+                    <button
+                      onClick={handleCreate}
+                      disabled={busy}
+                      className="px-5 py-[13px] rounded-xl text-ink font-semibold text-[14px] disabled:opacity-50 border-2 border-ink/10 bg-paper hover:border-ink/20"
+                    >Create</button>
+                  </div>
+                </>
+              ) : (
+                <>
                   <button
-                    onClick={handleJoin}
+                    onClick={handleGoogle}
                     disabled={busy}
-                    className="flex-1 py-[13px] rounded-xl text-white font-bold text-[15px] disabled:opacity-50 transition-transform active:scale-[0.99]"
+                    className="w-full mt-1 py-[12px] rounded-xl bg-paper border-2 border-ink/10 hover:border-ink/20 font-semibold text-[15px] flex items-center justify-center gap-2.5 disabled:opacity-50"
+                  >
+                    <GoogleIcon />
+                    Continue with Google
+                  </button>
+                  <div className="flex items-center gap-3 my-4">
+                    <div className="flex-1 h-px bg-ink/10" />
+                    <span className="text-[11px] text-ink/45 font-semibold uppercase tracking-wider">or</span>
+                    <div className="flex-1 h-px bg-ink/10" />
+                  </div>
+                  <Field label="Email">
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                      className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
+                    />
+                  </Field>
+                  <Field label="Password">
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleEmail(); }}
+                      placeholder="••••••••"
+                      autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                      className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
+                    />
+                  </Field>
+                  <button
+                    onClick={handleEmail}
+                    disabled={busy}
+                    className="w-full mt-2 py-[13px] rounded-xl text-white font-bold text-[15px] disabled:opacity-50"
                     style={{
                       background: 'linear-gradient(135deg, #D97435, #F08848)',
                       boxShadow: '0 3px 16px rgba(217,116,53,0.40)',
                     }}
-                  >Join room →</button>
-                  <button
-                    onClick={handleCreate}
-                    disabled={busy}
-                    className="px-5 py-[13px] rounded-xl text-ink font-semibold text-[14px] disabled:opacity-50 border-2 border-ink/10 bg-paper hover:border-ink/20"
-                  >Create</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={handleGoogle}
-                  disabled={busy}
-                  className="w-full mt-1 py-[12px] rounded-xl bg-paper border-2 border-ink/10 hover:border-ink/20 font-semibold text-[15px] flex items-center justify-center gap-2.5 disabled:opacity-50"
-                >
-                  <GoogleIcon />
-                  Continue with Google
-                </button>
-                <div className="flex items-center gap-3 my-4">
-                  <div className="flex-1 h-px bg-ink/10" />
-                  <span className="text-[11px] text-ink/45 font-semibold uppercase tracking-wider">or</span>
-                  <div className="flex-1 h-px bg-ink/10" />
-                </div>
-                <Field label="Email">
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    autoComplete="email"
-                    className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
-                  />
-                </Field>
-                <Field label="Password">
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleEmail(); }}
-                    placeholder="••••••••"
-                    autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-                    className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
-                  />
-                </Field>
-                <button
-                  onClick={handleEmail}
-                  disabled={busy}
-                  className="w-full mt-2 py-[13px] rounded-xl text-white font-bold text-[15px] disabled:opacity-50"
-                  style={{
-                    background: 'linear-gradient(135deg, #D97435, #F08848)',
-                    boxShadow: '0 3px 16px rgba(217,116,53,0.40)',
-                  }}
-                >{mode === 'signin' ? 'Sign in' : 'Create account'} →</button>
-                <p className="text-[12px] text-ink/55 mt-3 text-center">
-                  {mode === 'signin' ? "Don't have an account?" : 'Already have one?'}{' '}
-                  <button
-                    type="button"
-                    onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setErr(null); }}
-                    className="font-semibold text-amber hover:underline"
-                  >{mode === 'signin' ? 'Sign up' : 'Sign in'}</button>
-                </p>
-                {!isAuthConfigured && (
-                  <p className="text-[11px] text-ink/50 mt-3 text-center leading-snug">
-                    Sign-in is being set up. For now, use <button
+                  >{mode === 'signin' ? 'Sign in' : 'Create account'} →</button>
+                  <p className="text-[12px] text-ink/55 mt-3 text-center">
+                    {mode === 'signin' ? "Don't have an account?" : 'Already have one?'}{' '}
+                    <button
                       type="button"
-                      onClick={() => setTab('quick')}
+                      onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setErr(null); }}
                       className="font-semibold text-amber hover:underline"
-                    >Quick join</button>.
+                    >{mode === 'signin' ? 'Sign up' : 'Sign in'}</button>
                   </p>
-                )}
-              </>
-            )}
+                  {!isAuthConfigured && (
+                    <p className="text-[11px] text-ink/50 mt-3 text-center leading-snug">
+                      Sign-in is being set up. For now, use <button
+                        type="button"
+                        onClick={() => setTab('quick')}
+                        className="font-semibold text-amber hover:underline"
+                      >Quick join</button>.
+                    </p>
+                  )}
+                </>
+              )}
 
-            {err && (
-              <p className="mt-4 text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                {err}
-              </p>
-            )}
+              {err && (
+                <p className="mt-4 text-[13px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  {err}
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        </section>
       </main>
+
+      {/* ── Policy footer ───────────────────────────────────────── */}
+      <footer className="border-t border-ink/10">
+        <div className="max-w-6xl mx-auto px-5 sm:px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[13px] text-ink/55">
+          <div>© {new Date().getFullYear()} Mypapr</div>
+          <nav className="flex items-center gap-5">
+            <button onClick={() => scrollToId('how')} className="hover:text-ink">How it works</button>
+            <a href="#" className="hover:text-ink">Privacy</a>
+            <a href="#" className="hover:text-ink">Terms</a>
+          </nav>
+        </div>
+      </footer>
     </div>
   );
 }
 
 // ── Small building blocks ──────────────────────────────────────────
 
-// Brand mark. Uses the committed logo asset at /mypapr-logo.svg and falls
-// back to a clean text wordmark if the file isn't present yet, so the page
-// never shows a broken image.
-function Logo({ className }: { className?: string }) {
+// Brand mark. Loads the committed logo at /mypapr-logo.png and falls back to
+// a text wordmark if it isn't present yet, so the page never shows a broken
+// image. The art is white, so invert() flips it to dark on the light page.
+function Logo({ height = 32 }: { height?: number }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
     return (
       <span
-        className={`select-none ${className ?? ''}`}
+        className="select-none"
         style={{
           fontFamily: 'Georgia, "Times New Roman", serif',
           fontStyle: 'italic',
           fontWeight: 700,
-          fontSize: '42px',
+          fontSize: Math.round(height * 0.82),
           lineHeight: 1,
           letterSpacing: '-0.02em',
           color: '#1A1510',
-          display: 'inline-flex',
-          alignItems: 'center',
         }}
       >Mypapr</span>
     );
@@ -299,13 +410,21 @@ function Logo({ className }: { className?: string }) {
     <img
       src="/mypapr-logo.png"
       alt="Mypapr"
-      className={className}
-      // The supplied logo art is white; the landing background is light, so
-      // invert() flips it to dark ink. (Pure-white-on-transparent → near-black,
-      // alpha preserved.)
-      style={{ width: 'auto', objectFit: 'contain', filter: 'invert(1)' }}
+      style={{ height, width: 'auto', objectFit: 'contain', filter: 'invert(1)' }}
       onError={() => setFailed(true)}
     />
+  );
+}
+
+function Bullet({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <li className="flex items-start gap-3">
+      <span
+        className="mt-0.5 w-6 h-6 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-[12px] font-extrabold"
+        style={{ background: 'linear-gradient(140deg, #D97435, #E8B830)' }}
+      >{n}</span>
+      <span className="pt-0.5">{children}</span>
+    </li>
   );
 }
 
