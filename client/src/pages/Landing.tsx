@@ -385,23 +385,37 @@ export default function Landing() {
 
 // ── Small building blocks ──────────────────────────────────────────
 
-// Brand mark — the "Mypapr" wordmark rendered in an elegant signature script
-// (Great Vibes), in dark ink so it reads on the light page. `height` controls
-// the visual cap-height; the font-size is scaled up because script faces have
-// a small x-height relative to their em.
+// Brand mark — the hosted "Mypapr" logo image, referenced by URL (the
+// visitor's browser fetches it directly). The art is white, so invert()
+// flips it to dark ink so it reads on the light page. Falls back to a text
+// wordmark if the image fails to load.
+const LOGO_URL = 'https://i.ibb.co/PvpSXpNY/Chat-GPT-Image-7-juin-2026-19-29-26.png';
+
 function Logo({ height = 32 }: { height?: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <span
+        className="select-none"
+        style={{
+          fontFamily: 'Georgia, "Times New Roman", serif',
+          fontStyle: 'italic',
+          fontWeight: 700,
+          fontSize: Math.round(height * 0.9),
+          lineHeight: 1,
+          letterSpacing: '-0.02em',
+          color: '#1A1510',
+        }}
+      >Mypapr</span>
+    );
+  }
   return (
-    <span
-      className="select-none inline-block"
-      aria-label="Mypapr"
-      style={{
-        fontFamily: '"Great Vibes", cursive',
-        fontWeight: 400,
-        fontSize: Math.round(height * 1.6),
-        lineHeight: 1,
-        color: '#1A1510',
-      }}
-    >Mypapr</span>
+    <img
+      src={LOGO_URL}
+      alt="Mypapr"
+      style={{ height, width: 'auto', objectFit: 'contain', filter: 'invert(1)' }}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
