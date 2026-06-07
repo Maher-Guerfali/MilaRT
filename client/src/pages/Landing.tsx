@@ -11,6 +11,8 @@ import {
 } from '../lib/auth';
 
 // ── Random username generator ────────────────────────────────────────
+// Only used to seed a friendly default display name; there is no visible
+// "shuffle" control — the placeholder simply shows the suggestion.
 const ADJECTIVES = [
   'Quick', 'Calm', 'Brave', 'Bright', 'Lucky', 'Witty', 'Cosy', 'Bold',
   'Sunny', 'Mellow', 'Swift', 'Curious', 'Happy', 'Quiet', 'Loose', 'Sharp',
@@ -39,7 +41,7 @@ export default function Landing() {
   // ── Quick-join state ──────────────────────────────────────────────
   const [tab, setTab] = useState<Tab>('quick');
   const existing = useMemo(() => loadIdentity(), []);
-  const [randomDefault, setRandomDefault] = useState<string>(() => existing?.name ?? randomName());
+  const [randomDefault] = useState<string>(() => existing?.name ?? randomName());
   const [name, setName] = useState<string>(existing?.name ?? '');
   const [nameIsCustom, setNameIsCustom] = useState<boolean>(!!existing?.name);
 
@@ -113,72 +115,26 @@ export default function Landing() {
 
   return (
     <div
-      className="min-h-screen font-sans text-ink"
+      className="min-h-screen font-sans text-ink flex flex-col board-bg"
       style={{
-        background:
-          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(217,116,53,0.18), transparent 60%),' +
-          'radial-gradient(ellipse 40% 30% at 90% 10%, rgba(232,184,48,0.14), transparent 70%),' +
-          '#F3EDE0',
+        backgroundImage:
+          'radial-gradient(ellipse 70% 45% at 50% -10%, rgba(217,116,53,0.16), transparent 60%),' +
+          'radial-gradient(ellipse 45% 30% at 88% 8%, rgba(232,184,48,0.12), transparent 70%),' +
+          'radial-gradient(rgba(26,21,16,0.07) 1px, transparent 1px)',
+        backgroundSize: 'auto, auto, 24px 24px',
       }}
     >
-      {/* ── Top nav ─────────────────────────────────────────────── */}
-      <header className="max-w-6xl mx-auto px-6 pt-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-extrabold text-lg"
-            style={{
-              background: 'linear-gradient(140deg, #D97435, #E8B830)',
-              boxShadow: '0 6px 16px rgba(217,116,53,0.45)',
-            }}
-          >M</div>
-          <span className="text-[17px] font-extrabold tracking-tight">MaherBoard</span>
-        </div>
-        <nav className="flex items-center gap-2 text-sm">
-          <a
-            href="#how"
-            className="hidden sm:inline-block px-3 py-2 text-ink/70 hover:text-ink rounded-lg"
-          >How it works</a>
-          <a
-            href="#features"
-            className="hidden sm:inline-block px-3 py-2 text-ink/70 hover:text-ink rounded-lg"
-          >Features</a>
-          <button
-            onClick={() => { setTab('signin'); document.getElementById('join')?.scrollIntoView({ behavior: 'smooth' }); }}
-            className="px-4 py-2 rounded-lg font-semibold border-2 border-ink/10 bg-paper hover:border-ink/20"
-          >Sign in</button>
-        </nav>
-      </header>
-
-      {/* ── Hero + Join card ────────────────────────────────────── */}
-      <section id="join" className="max-w-6xl mx-auto px-6 pt-10 sm:pt-16 pb-16 grid lg:grid-cols-2 gap-10 items-center">
-        <div className="animate-fadeUp">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-paper border border-ink/10 text-[12px] font-semibold text-ink/70 mb-5">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
-            Real-time visual boards
-          </div>
-          <h1 className="text-[40px] sm:text-[52px] leading-[1.05] font-extrabold tracking-tight">
-            Think out loud,{' '}
-            <span style={{
-              background: 'linear-gradient(120deg, #D97435, #E8B830)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}>together.</span>
-          </h1>
-          <p className="mt-5 text-[17px] text-ink/65 leading-relaxed max-w-[520px]">
-            An infinite canvas for sticky notes, sketches, images and docs. Drop a link,
-            invite friends, sketch ideas live — no setup, no accounts required.
+      <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
+        <div className="w-full max-w-[420px] flex flex-col items-center animate-fadeUp">
+          {/* Brand — the logo IS the headline. */}
+          <Logo className="h-14 sm:h-16 mb-4" />
+          <p className="text-[15px] sm:text-[16px] text-ink/55 text-center leading-relaxed mb-8 max-w-[360px]">
+            An infinite sheet of paper for notes, sketches &amp; ideas — together.
           </p>
-          <ul className="mt-7 space-y-2.5 text-[15px] text-ink/75">
-            <FeatureLi>Create a room and share the URL — anyone with the link can join</FeatureLi>
-            <FeatureLi>Sticky notes, drawings, images, scanned docs, nested boards</FeatureLi>
-            <FeatureLi>Live cursors and presence so you see who's editing what</FeatureLi>
-          </ul>
-        </div>
 
-        {/* ── Auth card ───────────────────────────────────────── */}
-        <div className="animate-fadeUp">
+          {/* ── Join / sign-in card ─────────────────────────────── */}
           <div
-            className="rounded-[24px] border border-ink/10 p-6 sm:p-7 max-w-[460px] w-full mx-auto"
+            className="rounded-[24px] border border-ink/10 p-6 sm:p-7 w-full"
             style={{ background: '#FDFAF5', boxShadow: '0 16px 50px rgba(26,21,16,0.10)' }}
           >
             {/* Tabs */}
@@ -210,23 +166,15 @@ export default function Landing() {
 
             {tab === 'quick' ? (
               <>
-                <Field label="Your display name">
-                  <div className="flex gap-2">
-                    <input
-                      value={name}
-                      onChange={(e) => { setName(e.target.value); setNameIsCustom(true); }}
-                      maxLength={24}
-                      placeholder={randomDefault}
-                      className="flex-1 px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
-                      style={{ color: nameIsCustom ? '#1A1510' : 'rgba(26,21,16,0.38)' }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => { setRandomDefault(randomName()); setName(''); setNameIsCustom(false); }}
-                      title="Random name"
-                      className="px-3 rounded-xl border-2 border-ink/10 bg-paper hover:border-ink/20 text-ink/70 font-semibold"
-                    >🎲</button>
-                  </div>
+                <Field label="Your name">
+                  <input
+                    value={name}
+                    onChange={(e) => { setName(e.target.value); setNameIsCustom(true); }}
+                    maxLength={24}
+                    placeholder={randomDefault}
+                    className="w-full px-4 py-[12px] rounded-xl text-[15px] bg-cream border-2 border-ink/10 focus:border-amber outline-none transition-colors"
+                    style={{ color: nameIsCustom ? '#1A1510' : 'rgba(26,21,16,0.38)' }}
+                  />
                 </Field>
                 <div className="flex gap-2.5 mt-5">
                   <button
@@ -244,11 +192,6 @@ export default function Landing() {
                     className="px-5 py-[13px] rounded-xl text-ink font-semibold text-[14px] disabled:opacity-50 border-2 border-ink/10 bg-paper hover:border-ink/20"
                   >Create</button>
                 </div>
-                <p className="text-[11px] text-ink/55 mt-3 leading-snug">
-                  No account needed. The room name <em>is</em> the link your friends use.
-                  Tip: press <kbd className="px-1 py-0.5 rounded bg-cream border border-ink/10 text-[10px]">Enter</kbd> to join,
-                  {' '}<kbd className="px-1 py-0.5 rounded bg-cream border border-ink/10 text-[10px]">Shift+Enter</kbd> to create.
-                </p>
               </>
             ) : (
               <>
@@ -322,46 +265,46 @@ export default function Landing() {
             )}
           </div>
         </div>
-      </section>
-
-      {/* ── How it works ─────────────────────────────────────────── */}
-      <section id="how" className="max-w-6xl mx-auto px-6 py-14 sm:py-20">
-        <h2 className="text-[28px] sm:text-[34px] font-extrabold tracking-tight text-center">How it works</h2>
-        <p className="text-ink/60 text-center mt-2 max-w-[520px] mx-auto">
-          Three steps from blank page to a room buzzing with sketches and ideas.
-        </p>
-        <div className="grid sm:grid-cols-3 gap-4 mt-10">
-          <Step n={1} title="Name a room" body="Pick anything — your name becomes the URL. Share it with anyone." />
-          <Step n={2} title="Drop ideas" body="Drag sticky notes, sketches, images, PDFs, or paste links onto the canvas." />
-          <Step n={3} title="Collaborate live" body="See cursors, edit together, branch into nested boards as ideas grow." />
-        </div>
-      </section>
-
-      {/* ── Feature grid ─────────────────────────────────────────── */}
-      <section id="features" className="max-w-6xl mx-auto px-6 pb-20">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <Feature title="Infinite canvas" body="Pan, zoom, and pile in as much as you want — performance stays smooth." />
-          <Feature title="Live presence" body="Cursors, names and colours show who's there and what they're touching." />
-          <Feature title="Sketch & scan" body="Draw freehand, or snap a whiteboard photo and turn it into editable strokes." />
-          <Feature title="AI assist" body="Ask the assistant to clean up notes, lay out blocks, or rewrite text in place." />
-        </div>
-      </section>
-
-      {/* ── Footer ──────────────────────────────────────────────── */}
-      <footer className="border-t border-ink/10">
-        <div className="max-w-6xl mx-auto px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-[13px] text-ink/55">
-          <div>© {new Date().getFullYear()} MaherBoard — a visual thinking space.</div>
-          <div className="flex items-center gap-4">
-            <a href="#how" className="hover:text-ink">How it works</a>
-            <a href="#features" className="hover:text-ink">Features</a>
-          </div>
-        </div>
-      </footer>
+      </main>
     </div>
   );
 }
 
 // ── Small building blocks ──────────────────────────────────────────
+
+// Brand mark. Uses the committed logo asset at /mypapr-logo.svg and falls
+// back to a clean text wordmark if the file isn't present yet, so the page
+// never shows a broken image.
+function Logo({ className }: { className?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <span
+        className={`select-none ${className ?? ''}`}
+        style={{
+          fontFamily: 'Georgia, "Times New Roman", serif',
+          fontStyle: 'italic',
+          fontWeight: 700,
+          fontSize: '42px',
+          lineHeight: 1,
+          letterSpacing: '-0.02em',
+          color: '#1A1510',
+          display: 'inline-flex',
+          alignItems: 'center',
+        }}
+      >Mypapr</span>
+    );
+  }
+  return (
+    <img
+      src="/mypapr-logo.png"
+      alt="Mypapr"
+      className={className}
+      style={{ width: 'auto', objectFit: 'contain' }}
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -382,43 +325,6 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
     >
       {children}
     </button>
-  );
-}
-
-function FeatureLi({ children }: { children: React.ReactNode }) {
-  return (
-    <li className="flex items-start gap-2.5">
-      <span
-        className="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0"
-        style={{ background: 'linear-gradient(135deg, #D97435, #E8B830)' }}
-      />
-      <span>{children}</span>
-    </li>
-  );
-}
-
-function Step({ n, title, body }: { n: number; title: string; body: string }) {
-  return (
-    <div
-      className="rounded-2xl border border-ink/10 p-5"
-      style={{ background: '#FDFAF5' }}
-    >
-      <div
-        className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-extrabold text-[15px] mb-3"
-        style={{ background: 'linear-gradient(140deg, #D97435, #E8B830)' }}
-      >{n}</div>
-      <h3 className="font-bold text-[16px]">{title}</h3>
-      <p className="text-[13px] text-ink/60 mt-1.5 leading-relaxed">{body}</p>
-    </div>
-  );
-}
-
-function Feature({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded-2xl border border-ink/10 p-4 bg-paper/60 hover:bg-paper transition-colors">
-      <h3 className="font-bold text-[14px]">{title}</h3>
-      <p className="text-[12.5px] text-ink/60 mt-1 leading-relaxed">{body}</p>
-    </div>
   );
 }
 

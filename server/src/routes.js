@@ -268,7 +268,7 @@ export function makeRoutes({ uploadDir }) {
       return res.status(400).json({ error: 'missing items array' });
     }
 
-    const systemMessage = `You are an AI assistant for a canvas board app called MilaRT.
+    const systemMessage = `You are an AI assistant for a canvas board app called Mypapr.
 The board contains items positioned in a 2D world (pixel coordinates). Each item has:
 - id: unique string
 - type: "sticky" | "image" | "link" | "board"

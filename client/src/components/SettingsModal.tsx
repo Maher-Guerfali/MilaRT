@@ -226,7 +226,7 @@ export default function SettingsModal({
       } else if (data?.type === 'milart-board' && Array.isArray(data?.items)) {
         await handleImportBoard(data as { name?: string; items: BaseItem[]; strokes?: Stroke[] });
       } else {
-        throw new Error('Not a valid MilaRT export file (expected milart-board or milart-room v1/v2).');
+        throw new Error('Not a valid Mypapr export file (expected milart-board or milart-room v1/v2).');
       }
     } catch (err) {
       setMsg({ kind: 'err', text: (err as Error).message });
