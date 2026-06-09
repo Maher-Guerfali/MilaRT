@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, Stroke } from '../types';
+import type { BaseItem, StickyData, ImageData, LinkData, BoardRefData, DocumentData, PdfData, Stroke } from '../types';
 import { api } from '../api';
-import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon } from './icons';
+import { GripIcon, TrashIcon, BoardIcon, CameraIcon, LinkIcon, ImageIcon, DocumentIcon, PdfIcon, DownloadIcon } from './icons';
 
 interface Props {
   item: BaseItem;
@@ -368,6 +368,9 @@ export default function ItemView({
       {item.type === 'document' && (
         <DocumentBox item={item} selected={selected} onOpen={() => onOpenDocument?.(item.id)} />
       )}
+      {item.type === 'pdf' && (
+        <PdfBox item={item} selected={selected} />
+      )}
 
       {/* Drag grip — fixed screen size even while the canvas is zoomed.
           Hidden in image-extend mode where the TL corner is a resize handle. */}
@@ -432,6 +435,61 @@ export default function ItemView({
                 <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
             </button>
+          )}
+          {item.type === 'pdf' && (item.data as Partial<PdfData>).url && (
+            <>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const url = (item.data as Partial<PdfData>).url!;
+                  const name = (item.data as Partial<PdfData>).name || 'document.pdf';
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = name;
+                  a.target = '_blank';
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                }}
+                title="Download PDF"
+                className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
+              >
+                <DownloadIcon size={13} />
+              </button>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const url = (item.data as Partial<PdfData>).url!;
+                  const win = window.open(url);
+                  if (win) setTimeout(() => win.print(), 1000);
+                }}
+                title="Print PDF"
+                className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 6 2 18 2 18 9" />
+                  <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                  <rect x="6" y="14" width="12" height="8" />
+                </svg>
+              </button>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open((item.data as Partial<PdfData>).url!, '_blank', 'noopener,noreferrer');
+                }}
+                title="Open in new window"
+                className="w-[26px] h-[26px] rounded-full bg-white text-ink shadow ring-1 ring-ink/10 flex items-center justify-center"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </button>
+            </>
           )}
           {(item.type === 'image' || item.type === 'link') && onSendToStorage && (
             <button
@@ -1824,6 +1882,58 @@ function DocumentBox({
           color: '#fff',
         }}
       >Open</button>
+    </div>
+  );
+}
+
+function PdfBox({ item, selected }: { item: BaseItem; selected: boolean }) {
+  const d = item.data as Partial<PdfData>;
+  const url = d.url;
+  const name = d.name || 'PDF';
+
+  if (!url) {
+    return (
+      <div
+        className="w-full h-full rounded-2xl flex flex-col items-center justify-center gap-2 text-ink/50"
+        style={{
+          background: 'linear-gradient(135deg, rgba(26,21,16,0.04), rgba(217,116,53,0.10))',
+          border: '2px dashed rgba(26,21,16,0.14)',
+          boxShadow: selected ? '0 0 0 2.5px #D97435' : 'none',
+        }}
+      >
+        <PdfIcon size={26} />
+        <span className="text-[11px]">Drop a PDF here</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="w-full h-full rounded-2xl overflow-hidden flex flex-col"
+      style={{
+        boxShadow: selected
+          ? '0 0 0 2.5px #D97435, 0 8px 28px rgba(26,21,16,0.13)'
+          : '0 2px 10px rgba(26,21,16,0.09)',
+        border: '1px solid rgba(26,21,16,0.06)',
+        background: '#fff',
+      }}
+    >
+      {/* Header bar */}
+      <div
+        className="flex items-center gap-1.5 px-2.5 py-1.5 shrink-0"
+        style={{ borderBottom: '1px solid rgba(26,21,16,0.07)' }}
+      >
+        <PdfIcon size={12} />
+        <span className="text-[9px] font-bold uppercase tracking-[0.07em] text-ink/55">PDF</span>
+        <span className="flex-1 text-[10px] text-ink/70 truncate" title={name}>{name}</span>
+      </div>
+      {/* Embedded viewer */}
+      <iframe
+        src={url}
+        className="flex-1 w-full block"
+        title={name}
+        data-no-item-drag
+      />
     </div>
   );
 }
