@@ -97,6 +97,15 @@ export function makeRoutes({ uploadDir }) {
     },
   });
 
+  const uploadPdf = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype !== 'application/pdf') return cb(new Error('Only PDFs allowed'));
+      cb(null, true);
+    },
+  });
+
   const r = Router();
 
   // Create a new room. The user-supplied name is BOTH the human display
@@ -235,6 +244,26 @@ export function makeRoutes({ uploadDir }) {
       res.json({ url });
     } catch (err) {
       console.error('[upload] failed:', err);
+      res.status(500).json({ error: 'upload_failed', detail: err.message });
+    }
+  });
+
+  // Upload a PDF; returns a public URL the client can embed in a pdf item.
+  r.post('/upload/pdf', uploadPdf.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'no_file' });
+    const ext = '.pdf';
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    try {
+      const { url } = await storageUpload({
+        buffer: req.file.buffer,
+        filename,
+        mimetype: 'application/pdf',
+        localDir: uploadDir,
+      });
+      console.log(`[upload-pdf] mode=${STORAGE_MODE} -> ${url}`);
+      res.json({ url });
+    } catch (err) {
+      console.error('[upload-pdf] failed:', err);
       res.status(500).json({ error: 'upload_failed', detail: err.message });
     }
   });

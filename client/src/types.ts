@@ -1,4 +1,4 @@
-export type ItemType = 'sticky' | 'image' | 'link' | 'board' | 'document';
+export type ItemType = 'sticky' | 'image' | 'link' | 'board' | 'document' | 'pdf';
 
 export interface BaseItem {
   id: string;
@@ -25,6 +25,7 @@ export interface DocumentData {
   // Sanitised HTML produced by the in-app editor (or imported from .docx).
   content: string;
 }
+export interface PdfData { url: string; name: string; }
 
 export type StrokeTool = 'pen' | 'fountain' | 'pencil' | 'marker' | 'brush';
 

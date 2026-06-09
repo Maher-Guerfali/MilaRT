@@ -4,7 +4,7 @@ import type { BaseItem } from '../types';
 import { api } from '../api';
 import {
   StickyIcon, LinkIcon, BoardIcon, ImageIcon, TextIcon, DocumentIcon,
-  SettingsIcon, CameraIcon,
+  SettingsIcon, CameraIcon, PdfIcon,
 } from './icons';
 import Tooltip from './Tooltip';
 
@@ -93,6 +93,7 @@ function NavBtn({ Icon, label, hint, dragData, onClick }: NavBtnProps) {
 
 export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, onOpenTutorial, onOpenCameraScan, isDrawMode, onActivateMove }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
 
   function addItem(tmpl: ItemTemplate) {
     if (isDrawMode && onActivateMove) onActivateMove();
@@ -183,6 +184,12 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
         data: { title: 'Untitled', content: '' },
       })),
     },
+    {
+      label: 'PDF',
+      hint: 'Tap to upload a PDF',
+      Icon: PdfIcon,
+      action: () => pdfRef.current?.click(),
+    },
   ];
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -194,6 +201,19 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
       onAdd(template({ type: 'image', w: 218, h: 148, data: { url } }));
     } catch (err) {
       alert('Image upload failed: ' + (err as Error).message);
+    }
+  }
+
+  async function onPdfFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (isDrawMode && onActivateMove) onActivateMove();
+    try {
+      const { url } = await api.uploadPdf(file);
+      onAdd(template({ type: 'pdf', w: 320, h: 420, data: { url, name: file.name } }));
+    } catch (err) {
+      alert('PDF upload failed: ' + (err as Error).message);
     }
   }
 
@@ -225,6 +245,13 @@ export default function Sidebar({ roomCode, onAdd, onRefresh, onOpenSettings, on
           accept="image/*"
           className="hidden"
           onChange={onFile}
+        />
+        <input
+          ref={pdfRef}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={onPdfFile}
         />
       </div>
 

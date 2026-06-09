@@ -203,6 +203,17 @@ export const PlusIcon = wrap(
 
 export const MinusIcon = wrap(<path d="M5 12h14" />);
 
+export const PdfIcon = wrap(
+  <>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <path d="M9 15h1.5a1.5 1.5 0 0 0 0-3H9v6" />
+    <path d="M14 18v-3h1" />
+    <path d="M14 15h2" />
+    <path d="M17 15v6" />
+  </>
+);
+
 export const FitIcon = wrap(
   <>
     <path d="M4 9V5a1 1 0 0 1 1-1h4" />

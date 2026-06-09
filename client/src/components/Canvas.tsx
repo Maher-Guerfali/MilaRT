@@ -425,17 +425,36 @@ const Canvas = forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
       return;
     }
 
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
+    const allFiles = Array.from(e.dataTransfer.files) as File[];
+    const imgFiles = allFiles.filter((f) => f.type.startsWith('image/'));
+    const pdfFiles = allFiles.filter((f) => f.type === 'application/pdf');
+    if (!imgFiles.length && !pdfFiles.length) return;
     const start = toWorld(e.clientX, e.clientY);
     let off = 0;
-    for (const file of files) {
+    for (const file of imgFiles) {
       try {
         const { url } = await api.uploadImage(file);
         placeImageNow(url, start.x + off, start.y + off);
         off += 30;
       } catch (err) {
         alert('Image upload failed: ' + (err as Error).message);
+      }
+    }
+    for (const file of pdfFiles) {
+      try {
+        const { url } = await api.uploadPdf(file);
+        const pos = toWorld(e.clientX + off, e.clientY + off);
+        onAdd({
+          id: nanoid(10),
+          type: 'pdf',
+          x: pos.x - 160, y: pos.y - 210,
+          w: 320, h: 420,
+          z: 0,
+          data: { url, name: file.name },
+        });
+        off += 30;
+      } catch (err) {
+        alert('PDF upload failed: ' + (err as Error).message);
       }
     }
   }
