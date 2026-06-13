@@ -1,4 +1,4 @@
-import type { Board, Room, BaseItem, Stroke, RoomExportV2, AIOperation } from './types';
+import type { Board, Room, BaseItem, Stroke, RoomExportV2, AIOperation, MindEdge } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -151,6 +151,26 @@ export const api = {
       '/api/ai/whiteboard-trace',
       { method: 'POST', body: JSON.stringify({ regions }) },
     ),
+
+  // ── Mind map AI ────────────────────────────────────────────────────
+
+  /** Caption a single image with GPT vision. Accepts a base64 data URL
+   *  (preferred — works regardless of host) or a public http(s) URL.
+   *  Returns a short 3-7 word caption. */
+  captionImage: (image: { dataUrl?: string; url?: string }) =>
+    req<{ caption: string }>('/api/ai/caption', {
+      method: 'POST',
+      body: JSON.stringify(image),
+    }),
+
+  /** Infer semantic relationships between board items. Send a compact node
+   *  list ({ id, type, label }); get back a list of edges with short
+   *  relationship labels. */
+  mindmapLinks: (nodes: { id: string; type: string; label: string }[]) =>
+    req<{ edges: MindEdge[]; summary: string }>('/api/ai/mindmap', {
+      method: 'POST',
+      body: JSON.stringify({ nodes }),
+    }),
 
   /** Vision-scan a whiteboard / paper photo. Returns normalized blocks the
    *  client maps onto the canvas at the current viewport centre. */

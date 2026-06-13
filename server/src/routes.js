@@ -515,6 +515,181 @@ Return via the return_whiteboard_scan tool.`;
     }
   });
 
+  // ── AI image captioning (mind map labels) ─────────────────────────
+  // POST /api/ai/caption
+  // Body: { dataUrl?: string, url?: string }  // base64 data URL or public URL
+  // Returns: { caption: string }
+  r.post('/ai/caption', async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
+    }
+    const { dataUrl, url } = req.body || {};
+    const imageUrl = (typeof dataUrl === 'string' && dataUrl.startsWith('data:'))
+      ? dataUrl
+      : (typeof url === 'string' && /^https?:\/\//.test(url) ? url : null);
+    if (!imageUrl) {
+      return res.status(400).json({ error: 'missing image (provide dataUrl or http url)' });
+    }
+
+    const systemMessage =
+      'You write ultra-concise captions for images on a visual brainstorming board. ' +
+      'Given an image, reply with a single short noun phrase of 2 to 6 words that names the ' +
+      'main subject — no punctuation, no quotes, no leading words like "image of". ' +
+      'Examples: "Mountain lake at sunset", "Hand-drawn wireframe sketch", "Golden retriever puppy".';
+
+    try {
+      const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemMessage },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Caption this image in a few words.' },
+                { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } },
+              ],
+            },
+          ],
+          max_tokens: 30,
+          temperature: 0.2,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text().catch(() => '');
+        console.error('[ai/caption] OpenAI error:', aiRes.status, errText.slice(0, 200));
+        return res.status(502).json({ error: `OpenAI error ${aiRes.status}`, detail: errText.slice(0, 200) });
+      }
+
+      const aiData = await aiRes.json();
+      let caption = (aiData.choices?.[0]?.message?.content || '').toString().trim();
+      // Strip wrapping quotes / trailing period and clamp length.
+      caption = caption.replace(/^["'\s]+|["'.\s]+$/g, '').slice(0, 80);
+      res.json({ caption });
+    } catch (err) {
+      console.error('[ai/caption] error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── AI mind-map linking ───────────────────────────────────────────
+  // POST /api/ai/mindmap
+  // Body: { nodes: [{ id, type, label }] }
+  // Returns: { edges: [{ source, target, label }], summary }
+  r.post('/ai/mindmap', async (req, res) => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'AI not configured — set OPENAI_API_KEY in your environment.' });
+    }
+    const { nodes } = req.body || {};
+    if (!Array.isArray(nodes) || nodes.length === 0) {
+      return res.status(400).json({ error: 'missing nodes array' });
+    }
+    // Cap to keep token use + latency bounded.
+    const list = nodes.slice(0, 120).map(n => ({
+      id: String(n.id),
+      type: String(n.type || 'item'),
+      label: String(n.label || '').slice(0, 160),
+    }));
+    const validIds = new Set(list.map(n => n.id));
+
+    const systemMessage = `You organise items on a visual brainstorming board into a mind map.
+You are given a list of nodes (each has id, type, and a short label of its content).
+Infer the meaningful semantic relationships between them and return them as edges.
+Guidelines:
+- Connect nodes that are about the same topic, where one elaborates/exemplifies/supports another, or that belong in the same cluster.
+- Prefer a connected graph: most nodes should have at least one edge, but do NOT connect everything to everything. Aim for roughly N to 2N edges for N nodes.
+- Each edge has a "label": a 1-3 word relationship (e.g. "relates to", "example", "supports", "part of", "contrast"). Keep it lowercase.
+- Use ONLY the provided node ids. Never invent ids. No self-edges, no duplicate edges.
+- "summary" is one short sentence describing the overall theme of the board.
+Return via the return_mind_map tool.`;
+
+    const tools = [{
+      type: 'function',
+      function: {
+        name: 'return_mind_map',
+        description: 'Return the inferred mind-map edges for the given nodes.',
+        parameters: {
+          type: 'object',
+          properties: {
+            summary: { type: 'string' },
+            edges: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  source: { type: 'string' },
+                  target: { type: 'string' },
+                  label: { type: 'string' },
+                },
+                required: ['source', 'target'],
+              },
+            },
+          },
+          required: ['edges', 'summary'],
+        },
+      },
+    }];
+
+    try {
+      const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemMessage },
+            { role: 'user', content: `Nodes (${list.length}):\n${JSON.stringify(list, null, 2)}` },
+          ],
+          tools,
+          tool_choice: { type: 'function', function: { name: 'return_mind_map' } },
+          max_tokens: 2000,
+          temperature: 0.3,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text().catch(() => '');
+        console.error('[ai/mindmap] OpenAI error:', aiRes.status, errText.slice(0, 200));
+        return res.status(502).json({ error: `OpenAI error ${aiRes.status}`, detail: errText.slice(0, 200) });
+      }
+
+      const aiData = await aiRes.json();
+      const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+      if (!toolCall?.function?.arguments) {
+        return res.status(502).json({ error: 'AI returned no mind map' });
+      }
+      const result = JSON.parse(toolCall.function.arguments);
+
+      // Sanitise: keep only edges referencing real, distinct ids; dedupe
+      // undirected pairs.
+      const seen = new Set();
+      const edges = [];
+      for (const e of (Array.isArray(result.edges) ? result.edges : [])) {
+        const source = String(e?.source ?? '');
+        const target = String(e?.target ?? '');
+        if (!validIds.has(source) || !validIds.has(target) || source === target) continue;
+        const key = source < target ? `${source}|${target}` : `${target}|${source}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push({
+          source,
+          target,
+          label: typeof e.label === 'string' ? e.label.slice(0, 40) : undefined,
+        });
+      }
+      console.log(`[ai/mindmap] ${list.length} nodes -> ${edges.length} edges`);
+      res.json({ edges, summary: typeof result.summary === 'string' ? result.summary : '' });
+    } catch (err) {
+      console.error('[ai/mindmap] error:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── AI whiteboard trace (handwriting → editable strokes) ──────────
   // POST /api/ai/whiteboard-trace
   // Body: { regions: [{ dataUrl: string }, ...] }   // PNG crops, one per block

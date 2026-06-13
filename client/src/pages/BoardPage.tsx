@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { nanoid } from 'nanoid';
 import { api } from '../api';
-import type { Board, BaseItem, BoardRefData, Stroke, AIOperation } from '../types';
+import type { Board, BaseItem, BoardRefData, Stroke, AIOperation, MindMapPosition } from '../types';
 import Canvas, { type CanvasHandle } from '../components/Canvas';
+import MindMap from '../components/MindMap';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import CanvasDock from '../components/CanvasDock';
@@ -23,6 +24,23 @@ interface Snap {
   items: BaseItem[];
   strokes: Stroke[];
   name: string;
+}
+
+// Convert an image URL to a base64 data URL so the caption endpoint works
+// regardless of host (localhost dev URLs aren't reachable by OpenAI).
+async function urlToDataUrl(url: string): Promise<string | null> {
+  if (url.startsWith('data:')) return url;
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.readAsDataURL(blob);
+    });
+  } catch { return null; }
 }
 
 export default function BoardPage() {
@@ -69,6 +87,53 @@ export default function BoardPage() {
     explanation: string;
     operations: AIOperation[];
   } | null>(null);
+
+  // ── Mind map state ─────────────────────────────────────────────────
+  const [mindMapOpen, setMindMapOpen] = useState(false);
+  const [mindMapPosition, setMindMapPosition] = useState<MindMapPosition>(() => {
+    try { return (localStorage.getItem('milart.mindmap.pos') as MindMapPosition) || 'right'; }
+    catch { return 'right'; }
+  });
+  function chooseMindMapPosition(p: MindMapPosition) {
+    setMindMapPosition(p);
+    setMindMapOpen(true);
+    try { localStorage.setItem('milart.mindmap.pos', p); } catch { /* ignore */ }
+  }
+
+  // Persist an AI caption onto an image item (deep-merging data).
+  const setImageCaption = useCallback((id: string, caption: string) => {
+    setItems((xs) => xs.map((it) =>
+      it.id === id ? { ...it, data: { ...(it.data as object), caption } } : it,
+    ));
+  }, []);
+
+  // Auto-caption photos the moment they're on the board (any add path):
+  // drop, paste, sidebar upload, AI edit, import. Captions persist on the
+  // item so they're shared and only generated once.
+  const captionInFlight = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const it of items) {
+      if (it.type !== 'image') continue;
+      const d = it.data as { url?: string; caption?: string };
+      if (!d.url || (typeof d.caption === 'string' && d.caption.trim()) || captionInFlight.current.has(it.id)) continue;
+      captionInFlight.current.add(it.id);
+      const url = d.url;
+      void (async () => {
+        const dataUrl = await urlToDataUrl(url);
+        try {
+          const { caption } = await api.captionImage(dataUrl ? { dataUrl } : { url });
+          if (caption) setImageCaption(it.id, caption);
+        } catch { /* AI off or failed — leave uncaptioned, don't retry */ }
+      })();
+    }
+  }, [items, setImageCaption]);
+
+  function focusItemOnBoard(id: string) {
+    canvasRef.current?.focusOnIds([id]);
+    // From the full-screen map the board is hidden — pop to a side dock so
+    // the user can actually see where the item lives.
+    if (mindMapPosition === 'full') chooseMindMapPosition('right');
+  }
 
   async function handleAISubmit(prompt: string) {
     setAiLoading(true);
@@ -528,6 +593,10 @@ export default function BoardPage() {
           onRename={setName}
           onAISubmit={handleAISubmit}
           aiLoading={aiLoading}
+          mindMapOpen={mindMapOpen}
+          mindMapPosition={mindMapPosition}
+          onToggleMindMap={() => setMindMapOpen((o) => !o)}
+          onSetMindMapPosition={chooseMindMapPosition}
         />
 
         <Canvas
@@ -586,6 +655,34 @@ export default function BoardPage() {
           onPenOnlyChange={togglePenOnly}
           onClose={() => { setDrawOpen(false); setIsMove(true); }}
         />
+
+        {mindMapOpen && board && (
+          <div
+            className="absolute"
+            style={{
+              // Above the canvas docks (z 180000) so they don't poke through
+              // the overlay; spatially below the 46px TopBar so it stays clear.
+              zIndex: 185000,
+              top: 46,
+              bottom: 0,
+              left: mindMapPosition === 'right' ? 'auto' : 0,
+              right: mindMapPosition === 'left' ? 'auto' : 0,
+              width: mindMapPosition === 'full' ? 'auto' : 'clamp(360px, 42vw, 620px)',
+              boxShadow: mindMapPosition === 'full' ? 'none' : '0 0 40px rgba(26,21,16,0.18)',
+              borderLeft: mindMapPosition === 'right' ? '1px solid rgba(26,21,16,0.12)' : 'none',
+              borderRight: mindMapPosition === 'left' ? '1px solid rgba(26,21,16,0.12)' : 'none',
+            }}
+          >
+            <MindMap
+              items={items}
+              boardId={board._id}
+              position={mindMapPosition}
+              onSetPosition={chooseMindMapPosition}
+              onClose={() => setMindMapOpen(false)}
+              onFocusItem={focusItemOnBoard}
+            />
+          </div>
+        )}
       </div>
 
       <StoragePanel

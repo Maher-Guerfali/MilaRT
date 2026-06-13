@@ -203,6 +203,19 @@ export const PlusIcon = wrap(
 
 export const MinusIcon = wrap(<path d="M5 12h14" />);
 
+// Graph / mind-map icon — a hub node with three satellites.
+export const MindMapIcon = wrap(
+  <>
+    <circle cx="12" cy="12" r="2.6" />
+    <circle cx="5" cy="5" r="2" />
+    <circle cx="19" cy="6" r="2" />
+    <circle cx="17" cy="18" r="2" />
+    <path d="M9.9 10.1 6.4 6.4" />
+    <path d="M14.2 10.4 17.3 7.5" />
+    <path d="M13.5 13.9 15.7 16.4" />
+  </>
+);
+
 export const FitIcon = wrap(
   <>
     <path d="M4 9V5a1 1 0 0 1 1-1h4" />

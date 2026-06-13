@@ -12,7 +12,12 @@ export interface BaseItem {
 }
 
 export interface StickyData { text: string; color: string; fontSize?: number; bold?: boolean; }
-export interface ImageData { url: string; }
+export interface ImageData {
+  url: string;
+  // AI-generated short caption used as the image's mind-map label and a11y alt.
+  // Filled automatically the first time the photo is added (see BoardPage).
+  caption?: string;
+}
 export interface LinkData { url: string; title: string; fontSize?: number; bold?: boolean; }
 export interface BoardRefData {
   boardId: string;
@@ -119,3 +124,25 @@ export interface BoardExportV1 {
 }
 
 export type AnyMilartExport = BoardExportV1 | BoardExportV2 | RoomExportV2;
+
+// ── Mind map ─────────────────────────────────────────────────────────────
+// A semantic graph derived from the current board's items. Nodes mirror
+// items 1:1 (by id); edges are AI-inferred (or proximity-fallback) relations.
+export type MindMapPosition = 'left' | 'right' | 'full';
+
+export interface MindEdge {
+  source: string;   // item id
+  target: string;   // item id
+  /** Short relationship word/phrase, e.g. "supports", "example of". */
+  label?: string;
+}
+
+// Persisted (localStorage, per board) so the graph is stable across opens.
+export interface MindMapCache {
+  edges: MindEdge[];
+  /** Settled node positions, keyed by item id. */
+  positions?: Record<string, { x: number; y: number }>;
+  /** Item-set signature at generation time — lets us know when to re-link. */
+  signature?: string;
+  updatedAt?: string;
+}
